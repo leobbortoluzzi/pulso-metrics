@@ -65,7 +65,7 @@ const accountColors = ["#dcece4", "#eee7d7", "#e6e2f0", "#e1e9ee", "#f1e4dc"]
 
 function App() {
   const [authState, setAuthState] = useState<
-    "checking" | "setup" | "demo" | "authenticated" | "required"
+    "checking" | "setup" | "demo" | "authenticated" | "required" | "error"
   >("checking")
   const [page, setPage] = useState<Page>("overview")
   const [period, setPeriod] = useState<Period>(14)
@@ -219,29 +219,41 @@ function App() {
 
   useEffect(() => {
     let cancelled = false
-    fetch("/api/auth/session")
-      .then((response) => response.json())
-      .then(
-        (result: {
+
+    async function checkSession() {
+      try {
+        const response = await fetch("/api/auth/session")
+        if (!response.ok) throw new Error("Session check failed")
+
+        const result = (await response.json()) as {
           configured?: boolean
           setupRequired?: boolean
           authenticated?: boolean
-        }) => {
-          if (cancelled) return
-          setAuthState(
-            result.setupRequired
-              ? "setup"
-              : !result.configured
-                ? "demo"
-                : result.authenticated
-                  ? "authenticated"
-                  : "required"
-          )
         }
-      )
-      .catch(() => {
-        if (!cancelled) setAuthState("demo")
-      })
+        if (
+          typeof result.configured !== "boolean" ||
+          typeof result.setupRequired !== "boolean" ||
+          typeof result.authenticated !== "boolean"
+        ) {
+          throw new Error("Invalid session response")
+        }
+
+        if (cancelled) return
+        setAuthState(
+          result.setupRequired
+            ? "setup"
+            : result.configured
+              ? result.authenticated
+                ? "authenticated"
+                : "required"
+              : "demo"
+        )
+      } catch {
+        if (!cancelled) setAuthState(import.meta.env.DEV ? "demo" : "error")
+      }
+    }
+
+    void checkSession()
     return () => {
       cancelled = true
     }
@@ -730,6 +742,36 @@ function App() {
           setAuthState("authenticated")
         }}
       />
+    )
+  if (authState === "error")
+    return (
+      <main className="auth-screen">
+        <section className="login-card" role="alert">
+          <div className="login-brand">
+            <span className="brand-mark">
+              <Activity size={18} strokeWidth={2.6} />
+            </span>
+            <span>
+              pulso<span className="brand-period">.</span>
+            </span>
+          </div>
+          <div className="panel-kicker">CONFIGURAÇÃO DO WORKSPACE</div>
+          <h1>Não foi possível verificar seu acesso.</h1>
+          <p>
+            O servidor não conseguiu consultar a configuração do workspace. Se
+            esta é a primeira publicação, aplique as migrations do D1 com{" "}
+            <code>npm run db:remote</code> e atualize a página.
+          </p>
+          <button
+            className="button button-primary"
+            onClick={() => window.location.reload()}
+            type="button"
+          >
+            Tentar novamente
+            <RefreshCw size={15} />
+          </button>
+        </section>
+      </main>
     )
 
   return (
