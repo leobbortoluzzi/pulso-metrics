@@ -65,7 +65,7 @@ const accountColors = ["#dcece4", "#eee7d7", "#e6e2f0", "#e1e9ee", "#f1e4dc"]
 
 function App() {
   const [authState, setAuthState] = useState<
-    "checking" | "demo" | "authenticated" | "required"
+    "checking" | "setup" | "demo" | "authenticated" | "required"
   >("checking")
   const [page, setPage] = useState<Page>("overview")
   const [period, setPeriod] = useState<Period>(14)
@@ -221,16 +221,24 @@ function App() {
     let cancelled = false
     fetch("/api/auth/session")
       .then((response) => response.json())
-      .then((result: { configured?: boolean; authenticated?: boolean }) => {
-        if (cancelled) return
-        setAuthState(
-          !result.configured
-            ? "demo"
-            : result.authenticated
-              ? "authenticated"
-              : "required"
-        )
-      })
+      .then(
+        (result: {
+          configured?: boolean
+          setupRequired?: boolean
+          authenticated?: boolean
+        }) => {
+          if (cancelled) return
+          setAuthState(
+            result.setupRequired
+              ? "setup"
+              : !result.configured
+                ? "demo"
+                : result.authenticated
+                  ? "authenticated"
+                  : "required"
+          )
+        }
+      )
       .catch(() => {
         if (!cancelled) setAuthState("demo")
       })
@@ -709,6 +717,15 @@ function App() {
     return (
       <LoginPage
         onLoggedIn={() => {
+          setAdAccountList([])
+          setAuthState("authenticated")
+        }}
+      />
+    )
+  if (authState === "setup")
+    return (
+      <SetupPage
+        onAccountCreated={() => {
           setAdAccountList([])
           setAuthState("authenticated")
         }}
@@ -2051,16 +2068,28 @@ function IntegrationsPage({
   const [clientSecret, setClientSecret] = useState("")
   const [kiwifyAccountId, setKiwifyAccountId] = useState("")
   const [savingCredentials, setSavingCredentials] = useState(false)
+  const [metaAppId, setMetaAppId] = useState("")
+  const [metaAppSecret, setMetaAppSecret] = useState("")
+  const [metaApiVersion, setMetaApiVersion] = useState("v24.0")
+  const [metaConfigured, setMetaConfigured] = useState(false)
+  const [savingMetaSettings, setSavingMetaSettings] = useState(false)
+  const [hotmartWebhookToken, setHotmartWebhookToken] = useState("")
+  const [kiwifyWebhookToken, setKiwifyWebhookToken] = useState("")
+  const [savingWebhookSettings, setSavingWebhookSettings] = useState(false)
+  const [currentPassword, setCurrentPassword] = useState("")
+  const [newPassword, setNewPassword] = useState("")
+  const [confirmNewPassword, setConfirmNewPassword] = useState("")
+  const [savingPassword, setSavingPassword] = useState(false)
   const [connected, setConnected] = useState({
     meta: false,
     hotmart: false,
     kiwify: false,
   })
   const [webhookUrls, setWebhookUrls] = useState<{
-    hotmart: string
+    hotmart: string | null
     kiwify: string | null
   }>({
-    hotmart: `${window.location.origin}/api/webhooks/hotmart`,
+    hotmart: null,
     kiwify: null,
   })
 
@@ -2091,17 +2120,185 @@ function IntegrationsPage({
         }
       )
       .catch(() => undefined)
-    fetch("/api/integrations/webhooks")
+    fetch("/api/settings")
       .then((response) => (response.ok ? response.json() : null))
-      .then((result: { hotmart?: string; kiwify?: string | null } | null) => {
-        if (result?.hotmart)
-          setWebhookUrls({
-            hotmart: result.hotmart,
-            kiwify: result.kiwify ?? null,
-          })
-      })
+      .then(
+        (
+          result: {
+            meta?: {
+              configured?: boolean
+              appId?: string
+              apiVersion?: string
+            }
+            webhooks?: {
+              hotmartUrl?: string | null
+              kiwifyUrl?: string | null
+            }
+          } | null
+        ) => {
+          if (result?.meta) {
+            setMetaConfigured(Boolean(result.meta.configured))
+            setMetaAppId(result.meta.appId ?? "")
+            setMetaApiVersion(result.meta.apiVersion ?? "v24.0")
+          }
+          if (result?.webhooks)
+            setWebhookUrls({
+              hotmart: result.webhooks.hotmartUrl ?? null,
+              kiwify: result.webhooks.kiwifyUrl ?? null,
+            })
+        }
+      )
       .catch(() => undefined)
   }, [])
+
+  async function saveMetaSettings(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setSavingMetaSettings(true)
+    try {
+      const response = await fetch("/api/settings/meta", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          appId: metaAppId,
+          appSecret: metaAppSecret,
+          apiVersion: metaApiVersion,
+        }),
+      })
+      const result = (await response.json().catch(() => ({}))) as {
+        error?: string
+        configured?: boolean
+        appId?: string
+        apiVersion?: string
+      }
+      if (!response.ok)
+        throw new Error(result.error || "Não foi possível salvar o app Meta.")
+      setMetaConfigured(Boolean(result.configured))
+      setMetaAppId(result.appId ?? metaAppId)
+      setMetaApiVersion(result.apiVersion ?? metaApiVersion)
+      setMetaAppSecret("")
+      onToast("Configuração do aplicativo Meta salva com segurança.")
+    } catch (error) {
+      onToast(
+        error instanceof Error
+          ? error.message
+          : "Não foi possível salvar o app Meta."
+      )
+    } finally {
+      setSavingMetaSettings(false)
+    }
+  }
+
+  async function saveWebhookSettings(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const payload: Record<string, string> = {}
+    if (hotmartWebhookToken.trim())
+      payload.hotmartToken = hotmartWebhookToken.trim()
+    if (kiwifyWebhookToken.trim())
+      payload.kiwifyToken = kiwifyWebhookToken.trim()
+    if (!Object.keys(payload).length) {
+      onToast("Informe pelo menos um token para salvar.")
+      return
+    }
+
+    setSavingWebhookSettings(true)
+    try {
+      const response = await fetch("/api/settings/webhooks", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      })
+      const result = (await response.json().catch(() => ({}))) as {
+        error?: string
+        webhooks?: {
+          hotmartUrl?: string | null
+          kiwifyUrl?: string | null
+        }
+      }
+      if (!response.ok)
+        throw new Error(result.error || "Não foi possível salvar os tokens.")
+      setWebhookUrls({
+        hotmart: result.webhooks?.hotmartUrl ?? webhookUrls.hotmart,
+        kiwify: result.webhooks?.kiwifyUrl ?? webhookUrls.kiwify,
+      })
+      setHotmartWebhookToken("")
+      setKiwifyWebhookToken("")
+      onToast("Tokens de webhook salvos com segurança.")
+    } catch (error) {
+      onToast(
+        error instanceof Error
+          ? error.message
+          : "Não foi possível salvar os tokens."
+      )
+    } finally {
+      setSavingWebhookSettings(false)
+    }
+  }
+
+  async function changePassword(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (newPassword !== confirmNewPassword) {
+      onToast("As novas senhas não coincidem.")
+      return
+    }
+    setSavingPassword(true)
+    try {
+      const response = await fetch("/api/auth/password", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          currentPassword,
+          newPassword,
+          confirmPassword: confirmNewPassword,
+        }),
+      })
+      const result = (await response.json().catch(() => ({}))) as {
+        error?: string
+      }
+      if (!response.ok)
+        throw new Error(result.error || "Não foi possível alterar a senha.")
+      setCurrentPassword("")
+      setNewPassword("")
+      setConfirmNewPassword("")
+      onToast("Senha alterada. Sua sessão atual foi mantida.")
+    } catch (error) {
+      onToast(
+        error instanceof Error
+          ? error.message
+          : "Não foi possível alterar a senha."
+      )
+    } finally {
+      setSavingPassword(false)
+    }
+  }
+
+  function generateKiwifyToken() {
+    const bytes = crypto.getRandomValues(new Uint8Array(32))
+    setKiwifyWebhookToken(
+      Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")
+    )
+  }
+
+  async function removeWebhook(provider: "hotmart" | "kiwify") {
+    try {
+      const response = await fetch(`/api/settings/webhooks/${provider}`, {
+        method: "DELETE",
+      })
+      if (!response.ok)
+        throw new Error("Não foi possível remover o token do webhook.")
+      const result = (await response.json()) as {
+        webhooks?: { hotmartUrl?: string | null; kiwifyUrl?: string | null }
+      }
+      setWebhookUrls({
+        hotmart: result.webhooks?.hotmartUrl ?? null,
+        kiwify: result.webhooks?.kiwifyUrl ?? null,
+      })
+      onToast(
+        `Token ${provider === "hotmart" ? "Hotmart" : "Kiwify"} removido.`
+      )
+    } catch {
+      onToast("Não foi possível remover o token do webhook.")
+    }
+  }
 
   async function submitCredentials(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -2213,6 +2410,208 @@ function IntegrationsPage({
           </div>
         </div>
       </div>
+      <section className="panel workspace-config-panel">
+        <div className="setup-heading">
+          <div className="setup-step">1</div>
+          <div>
+            <div className="panel-kicker">CONFIGURAÇÃO DO WORKSPACE</div>
+            <h2>Credenciais e segurança</h2>
+            <p>
+              Salve os dados de acesso das plataformas aqui. Os valores
+              sensíveis ficam criptografados no Cloudflare.
+            </p>
+          </div>
+        </div>
+        <div className="workspace-config-grid">
+          <form
+            className="workspace-config-card"
+            id="meta-settings"
+            onSubmit={saveMetaSettings}
+          >
+            <div className="workspace-config-card-heading">
+              <strong>Aplicativo Meta</strong>
+              <span className={metaConfigured ? "configured" : "pending"}>
+                {metaConfigured ? "Configurado" : "Necessário para OAuth"}
+              </span>
+            </div>
+            <label>
+              App ID
+              <input
+                autoComplete="off"
+                required
+                value={metaAppId}
+                onChange={(event) => setMetaAppId(event.target.value)}
+                placeholder="ID do app no Meta for Developers"
+              />
+            </label>
+            <label>
+              App Secret
+              <input
+                autoComplete="new-password"
+                type="password"
+                required={!metaConfigured}
+                value={metaAppSecret}
+                onChange={(event) => setMetaAppSecret(event.target.value)}
+                placeholder={
+                  metaConfigured
+                    ? "Salvo; preencha para substituir"
+                    : "App Secret"
+                }
+              />
+            </label>
+            <label>
+              Versão da Graph API
+              <input
+                autoComplete="off"
+                pattern="v[0-9]{1,3}\.[0-9]"
+                required
+                value={metaApiVersion}
+                onChange={(event) => setMetaApiVersion(event.target.value)}
+                placeholder="v24.0"
+              />
+            </label>
+            <button
+              className="button button-primary"
+              disabled={savingMetaSettings}
+            >
+              {savingMetaSettings ? "Salvando…" : "Salvar aplicativo Meta"}
+            </button>
+          </form>
+          <form
+            className="workspace-config-card"
+            onSubmit={saveWebhookSettings}
+          >
+            <div className="workspace-config-card-heading">
+              <strong>Tokens dos webhooks</strong>
+              <span
+                className={
+                  webhookUrls.hotmart || webhookUrls.kiwify
+                    ? "configured"
+                    : "pending"
+                }
+              >
+                {webhookUrls.hotmart || webhookUrls.kiwify
+                  ? "Tokens protegidos"
+                  : "Adicione ao menos um token"}
+              </span>
+            </div>
+            <label>
+              Hotmart · HOTTOK
+              <input
+                autoComplete="new-password"
+                type="password"
+                value={hotmartWebhookToken}
+                onChange={(event) => setHotmartWebhookToken(event.target.value)}
+                placeholder={
+                  webhookUrls.hotmart
+                    ? "Salvo; preencha para substituir"
+                    : "Cole o HOTTOK"
+                }
+              />
+            </label>
+            <label>
+              Kiwify · token privado
+              <input
+                autoComplete="new-password"
+                type="password"
+                value={kiwifyWebhookToken}
+                onChange={(event) => setKiwifyWebhookToken(event.target.value)}
+                placeholder={
+                  webhookUrls.kiwify
+                    ? "Salvo; preencha para substituir"
+                    : "Crie um token longo e aleatório"
+                }
+              />
+            </label>
+            <div className="workspace-config-actions">
+              <button
+                type="button"
+                className="button button-secondary"
+                onClick={generateKiwifyToken}
+              >
+                Gerar token seguro para Kiwify
+              </button>
+            </div>
+            <p className="workspace-config-help">
+              Campos vazios mantêm os tokens atuais. Ao trocar um token,
+              atualize a configuração correspondente no gateway.
+            </p>
+            {(webhookUrls.hotmart || webhookUrls.kiwify) && (
+              <div className="workspace-config-actions">
+                {webhookUrls.hotmart && (
+                  <button
+                    type="button"
+                    className="button button-secondary"
+                    onClick={() => void removeWebhook("hotmart")}
+                  >
+                    Remover HOTTOK
+                  </button>
+                )}
+                {webhookUrls.kiwify && (
+                  <button
+                    type="button"
+                    className="button button-secondary"
+                    onClick={() => void removeWebhook("kiwify")}
+                  >
+                    Remover token Kiwify
+                  </button>
+                )}
+              </div>
+            )}
+            <button
+              className="button button-primary"
+              disabled={savingWebhookSettings}
+            >
+              {savingWebhookSettings ? "Salvando…" : "Salvar tokens"}
+            </button>
+          </form>
+          <form className="workspace-config-card" onSubmit={changePassword}>
+            <div className="workspace-config-card-heading">
+              <strong>Conta administrativa</strong>
+              <span className="configured">Protegida</span>
+            </div>
+            <label>
+              Senha atual
+              <input
+                autoComplete="current-password"
+                type="password"
+                minLength={12}
+                maxLength={128}
+                required
+                value={currentPassword}
+                onChange={(event) => setCurrentPassword(event.target.value)}
+              />
+            </label>
+            <label>
+              Nova senha <span>(mínimo de 12 caracteres)</span>
+              <input
+                autoComplete="new-password"
+                type="password"
+                minLength={12}
+                maxLength={128}
+                required
+                value={newPassword}
+                onChange={(event) => setNewPassword(event.target.value)}
+              />
+            </label>
+            <label>
+              Confirmar nova senha
+              <input
+                autoComplete="new-password"
+                type="password"
+                minLength={12}
+                maxLength={128}
+                required
+                value={confirmNewPassword}
+                onChange={(event) => setConfirmNewPassword(event.target.value)}
+              />
+            </label>
+            <button className="button button-primary" disabled={savingPassword}>
+              {savingPassword ? "Alterando…" : "Alterar senha"}
+            </button>
+          </form>
+        </div>
+      </section>
       <div className="section-title-row">
         <div>
           <h2>Fontes de dados</h2>
@@ -2230,7 +2629,16 @@ function IntegrationsPage({
           badge="Marketing API"
           state={connected.meta ? "Conectado" : "Não conectado"}
           action={connected.meta ? "Reconectar conta" : "Conectar conta"}
-          onAction={() => window.location.assign("/auth/meta/start")}
+          onAction={() => {
+            if (metaConfigured) {
+              window.location.assign("/auth/meta/start")
+              return
+            }
+            document
+              .getElementById("meta-settings")
+              ?.scrollIntoView({ behavior: "smooth", block: "center" })
+            onToast("Salve o App ID e o App Secret antes de conectar a Meta.")
+          }}
         />
         <IntegrationCard
           provider="Hotmart"
@@ -2270,9 +2678,14 @@ function IntegrationsPage({
         <div className="webhook-url-row">
           <div>
             <span>HOTMART · WEBHOOK DE VENDAS</span>
-            <code>{webhookUrls.hotmart}</code>
+            <code>
+              {webhookUrls.hotmart ?? "Configure o HOTTOK acima para ativar"}
+            </code>
           </div>
-          <button onClick={() => copy(webhookUrls.hotmart)}>
+          <button
+            disabled={!webhookUrls.hotmart}
+            onClick={() => webhookUrls.hotmart && copy(webhookUrls.hotmart)}
+          >
             {copyText === webhookUrls.hotmart ? (
               <Check size={15} />
             ) : (
@@ -2285,7 +2698,7 @@ function IntegrationsPage({
           <div>
             <span>KIWIFY · WEBHOOK DE VENDAS</span>
             <code>
-              {webhookUrls.kiwify ?? "Configure KIWIFY_WEBHOOK_TOKEN no Worker"}
+              {webhookUrls.kiwify ?? "Configure um token acima para ativar"}
             </code>
           </div>
           <button
@@ -2301,8 +2714,8 @@ function IntegrationsPage({
           </button>
         </div>
         <div className="setup-footnote">
-          <BadgeCheck size={15} /> A Hotmart autentica eventos pelo header
-          HOTTOK. A Kiwify usa o token privado incluído na URL.
+          <BadgeCheck size={15} /> A Hotmart valida o HOTTOK no cabeçalho do
+          evento. A Kiwify valida o token privado incluído na URL.
         </div>
       </section>
       <section className="panel connection-note">
@@ -2312,14 +2725,14 @@ function IntegrationsPage({
         <div>
           <strong>Seus dados permanecem privados</strong>
           <span>
-            Tokens de acesso são criptografados no servidor. Dados de
+            Credenciais são criptografadas antes de serem salvas no D1. Dados de
             compradores não são armazenados no dashboard.
           </span>
         </div>
         <button
           onClick={() =>
             onToast(
-              "A criptografia e a autenticação são aplicadas no Worker após configurar os secrets."
+              "A senha e as credenciais são protegidas no Worker; os tokens não são exibidos novamente após salvar."
             )
           }
         >
@@ -2488,6 +2901,104 @@ function ShieldIcon() {
     <span className="shield-shape">
       <BadgeCheck size={18} />
     </span>
+  )
+}
+
+function SetupPage({ onAccountCreated }: { onAccountCreated: () => void }) {
+  const [password, setPassword] = useState("")
+  const [confirmPassword, setConfirmPassword] = useState("")
+  const [error, setError] = useState("")
+  const [submitting, setSubmitting] = useState(false)
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setError("")
+    if (password !== confirmPassword) {
+      setError("As senhas não coincidem.")
+      return
+    }
+    setSubmitting(true)
+    try {
+      const response = await fetch("/api/auth/setup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password, confirmPassword }),
+      })
+      const result = (await response.json().catch(() => ({}))) as {
+        error?: string
+      }
+      if (!response.ok)
+        throw new Error(result.error || "Não foi possível criar a conta.")
+      setPassword("")
+      setConfirmPassword("")
+      onAccountCreated()
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "Não foi possível criar a conta."
+      )
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <main className="auth-screen">
+      <form className="login-card" onSubmit={submit}>
+        <div className="login-brand">
+          <span className="brand-mark">
+            <Activity size={18} strokeWidth={2.6} />
+          </span>
+          <span>
+            pulso<span className="brand-period">.</span>
+          </span>
+        </div>
+        <div className="panel-kicker">CONFIGURAÇÃO INICIAL</div>
+        <h1>Crie sua conta administrativa.</h1>
+        <p>
+          Escolha uma senha para proteger este workspace. Esta etapa aparece
+          somente no primeiro acesso.
+        </p>
+        <label>
+          Senha <span>(mínimo de 12 caracteres)</span>
+          <input
+            autoFocus
+            type="password"
+            autoComplete="new-password"
+            minLength={12}
+            maxLength={128}
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+            required
+          />
+        </label>
+        <label>
+          Confirmar senha
+          <input
+            type="password"
+            autoComplete="new-password"
+            minLength={12}
+            maxLength={128}
+            value={confirmPassword}
+            onChange={(event) => setConfirmPassword(event.target.value)}
+            required
+          />
+        </label>
+        {error && (
+          <div className="login-error" role="alert">
+            {error}
+          </div>
+        )}
+        <button className="button button-primary" disabled={submitting}>
+          {submitting ? "Protegendo workspace…" : "Criar conta e continuar"}
+          <ArrowRight size={15} />
+        </button>
+        <span className="login-security">
+          <BadgeCheck size={13} /> A senha é armazenada como hash seguro
+        </span>
+      </form>
+    </main>
   )
 }
 

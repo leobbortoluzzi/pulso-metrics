@@ -1,4 +1,6 @@
 const encoder = new TextEncoder()
+// The production Workers runtime currently caps each PBKDF2 call at 100,000.
+const PASSWORD_HASH_ITERATIONS = 100_000
 
 function decodeBase64(value: string) {
   const binary = atob(value)
@@ -26,44 +28,84 @@ export async function secretsMatch(left: string, right: string) {
   return mismatch === 0
 }
 
-function encryptionKey(env: Env) {
-  if (!env.TOKEN_ENCRYPTION_KEY)
-    throw new Error("TOKEN_ENCRYPTION_KEY is not configured")
-  const key = decodeBase64(env.TOKEN_ENCRYPTION_KEY)
-  if (key.byteLength !== 32)
-    throw new Error(
-      "TOKEN_ENCRYPTION_KEY must contain 32 random bytes in base64"
-    )
-  return crypto.subtle.importKey("raw", key, "AES-GCM", false, [
-    "encrypt",
-    "decrypt",
-  ])
+function secretVault(env: Env) {
+  return env.SECRET_VAULT.get(env.SECRET_VAULT.idFromName("workspace"))
 }
 
 export async function encryptSecret(value: string, env: Env) {
-  const iv = crypto.getRandomValues(new Uint8Array(12))
-  const key = await encryptionKey(env)
-  const encrypted = await crypto.subtle.encrypt(
-    { name: "AES-GCM", iv },
-    key,
-    encoder.encode(value)
-  )
-  return `${encodeBase64(iv)}.${encodeBase64(new Uint8Array(encrypted))}`
+  return secretVault(env).encryptSecret(value)
 }
 
 export async function decryptSecret(value: string, env: Env) {
-  const [ivValue, ciphertextValue] = value.split(".")
-  if (!ivValue || !ciphertextValue)
-    throw new Error("Encrypted value is malformed")
-  const iv = decodeBase64(ivValue)
-  const ciphertext = decodeBase64(ciphertextValue)
-  const key = await encryptionKey(env)
-  const decrypted = await crypto.subtle.decrypt(
-    { name: "AES-GCM", iv },
-    key,
-    ciphertext
+  if (!value.startsWith("v2."))
+    throw new Error("O valor criptografado está incompleto.")
+  return secretVault(env).decryptSecret(value)
+}
+
+async function derivePassword(password: string, salt: Uint8Array) {
+  const material = await crypto.subtle.importKey(
+    "raw",
+    encoder.encode(password),
+    "PBKDF2",
+    false,
+    ["deriveBits"]
   )
-  return new TextDecoder().decode(decrypted)
+  return new Uint8Array(
+    await crypto.subtle.deriveBits(
+      {
+        name: "PBKDF2",
+        hash: "SHA-256",
+        salt,
+        iterations: PASSWORD_HASH_ITERATIONS,
+      },
+      material,
+      256
+    )
+  )
+}
+
+export async function createPasswordHash(password: string) {
+  const salt = crypto.getRandomValues(new Uint8Array(16))
+  const hash = await derivePassword(password, salt)
+  return `pbkdf2-sha256$${PASSWORD_HASH_ITERATIONS}$${encodeBase64(salt)}$${encodeBase64(hash)}`
+}
+
+export async function verifyPassword(password: string, encoded: string) {
+  const [algorithm, iterationsText, saltText, hashText, extra] =
+    encoded.split("$")
+  const iterations = Number(iterationsText)
+  if (
+    algorithm !== "pbkdf2-sha256" ||
+    extra !== undefined ||
+    !Number.isSafeInteger(iterations) ||
+    iterations < 100_000 ||
+    iterations > PASSWORD_HASH_ITERATIONS ||
+    !saltText ||
+    !hashText
+  )
+    return false
+
+  const salt = decodeBase64(saltText)
+  const expected = decodeBase64(hashText)
+  if (salt.byteLength !== 16 || expected.byteLength !== 32) return false
+  const material = await crypto.subtle.importKey(
+    "raw",
+    encoder.encode(password),
+    "PBKDF2",
+    false,
+    ["deriveBits"]
+  )
+  const actual = new Uint8Array(
+    await crypto.subtle.deriveBits(
+      { name: "PBKDF2", hash: "SHA-256", salt, iterations },
+      material,
+      256
+    )
+  )
+  let mismatch = 0
+  for (let index = 0; index < actual.length; index += 1)
+    mismatch |= actual[index] ^ expected[index]
+  return mismatch === 0
 }
 
 export function randomToken(byteLength = 32) {

@@ -16,28 +16,6 @@
     "preview": "vite preview",
     "test": "vitest run"
   },
-  "cloudflare": {
-    "bindings": {
-      "DASHBOARD_PASSWORD": {
-        "description": "Senha longa e exclusiva para proteger o acesso ao painel."
-      },
-      "TOKEN_ENCRYPTION_KEY": {
-        "description": "Chave aleatória base64 de 32 bytes. Gere com `openssl rand -base64 32`; protege as credenciais dos gateways armazenadas no D1."
-      },
-      "META_APP_ID": {
-        "description": "App ID do aplicativo criado em Meta for Developers para OAuth e leitura de anúncios."
-      },
-      "META_APP_SECRET": {
-        "description": "App Secret do mesmo aplicativo Meta; mantenha este valor privado."
-      },
-      "HOTMART_WEBHOOK_TOKEN": {
-        "description": "Valor HOTTOK configurado para o webhook da Hotmart."
-      },
-      "KIWIFY_WEBHOOK_TOKEN": {
-        "description": "Token longo e aleatório configurado no webhook da Kiwify."
-      }
-    }
-  },
   "dependencies": {
     "@base-ui/react": "^1.8.0",
     "@cloudflare/vite-plugin": "^1.61.0",

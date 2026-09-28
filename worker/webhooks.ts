@@ -1,5 +1,6 @@
 import { convertToBrl } from "../src/lib/metrics"
 import { secretsMatch } from "./secure-store"
+import { readWebhookToken } from "./settings"
 import type { QueueMessage } from "./messages"
 
 type Provider = "hotmart" | "kiwify"
@@ -521,16 +522,12 @@ export async function ingestSale(
 
 export async function hotmartWebhookIsAuthorized(request: Request, env: Env) {
   const supplied = request.headers.get("X-HOTMART-HOTTOK") ?? ""
-  return Boolean(
-    env.HOTMART_WEBHOOK_TOKEN &&
-    (await secretsMatch(supplied, env.HOTMART_WEBHOOK_TOKEN))
-  )
+  const expected = await readWebhookToken(env, "hotmart")
+  return Boolean(expected && (await secretsMatch(supplied, expected)))
 }
 
 export async function kiwifyWebhookIsAuthorized(request: Request, env: Env) {
   const supplied = new URL(request.url).searchParams.get("token") ?? ""
-  return Boolean(
-    env.KIWIFY_WEBHOOK_TOKEN &&
-    (await secretsMatch(supplied, env.KIWIFY_WEBHOOK_TOKEN))
-  )
+  const expected = await readWebhookToken(env, "kiwify")
+  return Boolean(expected && (await secretsMatch(supplied, expected)))
 }

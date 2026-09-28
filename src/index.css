@@ -2022,6 +2022,94 @@ p {
   color: #929f96;
   font-size: 8px;
 }
+.workspace-config-panel {
+  margin-top: 14px;
+  padding: 16px;
+}
+.workspace-config-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 11px;
+}
+.workspace-config-card {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 9px;
+  padding: 12px;
+  border: 1px solid #edf0ed;
+  border-radius: 9px;
+  background: #fbfcfb;
+}
+.workspace-config-card-heading {
+  display: flex;
+  min-height: 25px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 2px;
+}
+.workspace-config-card-heading strong {
+  color: #345243;
+  font-size: 10px;
+  font-weight: 700;
+}
+.workspace-config-card-heading > span {
+  color: #89958c;
+  font-size: 8px;
+}
+.workspace-config-card-heading > span.configured {
+  color: #62835b;
+}
+.workspace-config-card > label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  color: #66776c;
+  font-size: 8px;
+  font-weight: 650;
+}
+.workspace-config-card input {
+  width: 100%;
+  height: 34px;
+  padding: 0 9px;
+  border: 1px solid #e1e8e1;
+  border-radius: 6px;
+  outline: 0;
+  background: #fff;
+  color: #3b5244;
+  font-size: 9px;
+}
+.workspace-config-card input:focus {
+  border-color: #a9bda3;
+  box-shadow: 0 0 0 3px #eff5ed;
+}
+.workspace-config-card input::placeholder {
+  color: #a3ada5;
+}
+.workspace-config-card > .button {
+  align-self: flex-start;
+  min-height: 32px;
+  margin-top: 2px;
+  padding: 0 11px;
+  font-size: 8px;
+}
+.workspace-config-help {
+  margin: 0;
+  color: #8c9a90;
+  font-size: 8px;
+  line-height: 1.5;
+}
+.workspace-config-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.workspace-config-actions .button {
+  min-height: 27px;
+  padding: 0 8px;
+  font-size: 7px;
+}
 .webhook-url-row {
   display: flex;
   align-items: center;
@@ -2430,6 +2518,9 @@ p {
   }
   .main-column {
     margin-left: 0;
+  }
+  .workspace-config-grid {
+    grid-template-columns: 1fr;
   }
   .topbar {
     height: 55px;

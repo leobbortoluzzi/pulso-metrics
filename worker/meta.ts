@@ -5,6 +5,7 @@ import {
   sha256,
 } from "./secure-store"
 import type { QueueMessage } from "./messages"
+import { readMetaConfiguration } from "./settings"
 
 type JsonRecord = Record<string, unknown>
 
@@ -20,18 +21,11 @@ function asText(value: unknown, fallback = "") {
     : fallback
 }
 
-function requiredMetaConfig(env: Env) {
-  if (!env.META_APP_ID || !env.META_APP_SECRET || !env.META_API_VERSION) {
-    throw new Error(
-      "Configure META_APP_ID, META_APP_SECRET e META_API_VERSION nos secrets do Worker."
-    )
-  }
-  if (!/^v\d{1,3}\.\d$/.test(env.META_API_VERSION)) {
-    throw new Error(
-      "META_API_VERSION deve seguir o formato vNN.N (por exemplo, v24.0)."
-    )
-  }
-  return env.META_API_VERSION
+async function requiredMetaConfig(env: Env) {
+  const config = await readMetaConfiguration(env)
+  if (!config)
+    throw new Error("Configure o App ID e o App Secret da Meta em Integrações.")
+  return config
 }
 
 function graphEndpoint(version: string, path: string) {
@@ -53,7 +47,7 @@ async function graphJson(url: URL): Promise<JsonRecord> {
 }
 
 export async function beginMetaAuthorization(env: Env, requestUrl: string) {
-  const version = requiredMetaConfig(env)
+  const config = await requiredMetaConfig(env)
   const state = randomToken(24)
   const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString()
   await env.DB.prepare(
@@ -63,8 +57,10 @@ export async function beginMetaAuthorization(env: Env, requestUrl: string) {
     .run()
 
   const callbackUrl = new URL("/auth/meta/callback", requestUrl)
-  const authorize = new URL(`https://www.facebook.com/${version}/dialog/oauth`)
-  authorize.searchParams.set("client_id", env.META_APP_ID)
+  const authorize = new URL(
+    `https://www.facebook.com/${config.apiVersion}/dialog/oauth`
+  )
+  authorize.searchParams.set("client_id", config.appId)
   authorize.searchParams.set("redirect_uri", callbackUrl.toString())
   authorize.searchParams.set("state", state)
   authorize.searchParams.set("response_type", "code")
@@ -73,7 +69,8 @@ export async function beginMetaAuthorization(env: Env, requestUrl: string) {
 }
 
 export async function completeMetaAuthorization(env: Env, requestUrl: string) {
-  const version = requiredMetaConfig(env)
+  const config = await requiredMetaConfig(env)
+  const version = config.apiVersion
   const incoming = new URL(requestUrl)
   const error =
     incoming.searchParams.get("error_description") ??
@@ -100,8 +97,8 @@ export async function completeMetaAuthorization(env: Env, requestUrl: string) {
 
   const callbackUrl = new URL("/auth/meta/callback", incoming.origin).toString()
   const shortTokenUrl = graphEndpoint(version, "oauth/access_token")
-  shortTokenUrl.searchParams.set("client_id", env.META_APP_ID)
-  shortTokenUrl.searchParams.set("client_secret", env.META_APP_SECRET)
+  shortTokenUrl.searchParams.set("client_id", config.appId)
+  shortTokenUrl.searchParams.set("client_secret", config.appSecret)
   shortTokenUrl.searchParams.set("redirect_uri", callbackUrl)
   shortTokenUrl.searchParams.set("code", code)
   const shortToken = await graphJson(shortTokenUrl)
@@ -111,8 +108,8 @@ export async function completeMetaAuthorization(env: Env, requestUrl: string) {
 
   const longTokenUrl = graphEndpoint(version, "oauth/access_token")
   longTokenUrl.searchParams.set("grant_type", "fb_exchange_token")
-  longTokenUrl.searchParams.set("client_id", env.META_APP_ID)
-  longTokenUrl.searchParams.set("client_secret", env.META_APP_SECRET)
+  longTokenUrl.searchParams.set("client_id", config.appId)
+  longTokenUrl.searchParams.set("client_secret", config.appSecret)
   longTokenUrl.searchParams.set("fb_exchange_token", shortAccessToken)
   const longToken = await graphJson(longTokenUrl)
   const accessToken = asText(longToken.access_token, shortAccessToken)
@@ -322,7 +319,8 @@ export async function consumeMetaSync(
     .bind(message.syncId, message.accountId)
     .run()
 
-  const version = requiredMetaConfig(env)
+  const config = await requiredMetaConfig(env)
+  const version = config.apiVersion
   const accessToken = await decryptSecret(
     integration.access_token_ciphertext,
     env

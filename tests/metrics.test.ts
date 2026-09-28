@@ -4,7 +4,21 @@ import {
   calculatePerformance,
   convertToBrl,
 } from "../src/lib/metrics"
+import { createPasswordHash, verifyPassword } from "../worker/secure-store"
 import { normalizeSale } from "../worker/webhooks"
+
+describe("first-access dashboard account", () => {
+  it("stores a salted password hash and rejects a different password", async () => {
+    const password = "senha segura para o workspace"
+    const hash = await createPasswordHash(password)
+
+    expect(hash).not.toContain(password)
+    expect(hash.split("$")[0]).toBe("pbkdf2-sha256")
+    expect(hash.split("$")[1]).toBe("100000")
+    await expect(verifyPassword(password, hash)).resolves.toBe(true)
+    await expect(verifyPassword("outra senha", hash)).resolves.toBe(false)
+  })
+})
 
 describe("campaign performance formulas", () => {
   it("calculates ROAS, ROI and profit from net attributed revenue", () => {

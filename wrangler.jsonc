@@ -4,9 +4,6 @@
   "main": "worker/index.ts",
   "compatibility_date": "2026-09-28",
   "compatibility_flags": ["nodejs_compat"],
-  "vars": {
-    "META_API_VERSION": "v24.0"
-  },
   "assets": {
     "directory": "./dist",
     "binding": "ASSETS",
@@ -19,6 +16,12 @@
       "database_name": "pulso-metrics",
       "migrations_dir": "./migrations"
     }
+  ],
+  "durable_objects": {
+    "bindings": [{ "name": "SECRET_VAULT", "class_name": "SecretVault" }]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["SecretVault"] }
   ],
   "queues": {
     "producers": [{ "binding": "SYNC_QUEUE", "queue": "pulso-sync" }],

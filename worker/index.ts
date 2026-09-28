@@ -14,13 +14,27 @@ import {
   removeGatewayCredentials,
   saveGatewayCredentials,
 } from "./gateways"
-import { randomToken, readCookie, secretsMatch, sha256 } from "./secure-store"
+import {
+  createPasswordHash,
+  randomToken,
+  readCookie,
+  sha256,
+  verifyPassword,
+} from "./secure-store"
+import {
+  removeWebhookToken,
+  saveMetaConfiguration,
+  saveWebhookTokens,
+  workspaceSettingsView,
+} from "./settings"
 import {
   hotmartWebhookIsAuthorized,
   ingestSale,
   kiwifyWebhookIsAuthorized,
 } from "./webhooks"
 import type { QueueMessage } from "./messages"
+
+export { SecretVault } from "./vault"
 
 type Level = "campaign" | "adset" | "ad"
 type MetricRow = {
@@ -48,6 +62,41 @@ type SalesAggregate = {
 
 const app = new Hono<{ Bindings: Env }>()
 
+async function dashboardAccount(env: Env) {
+  return env.DB.prepare(
+    "SELECT password_hash FROM owner_account WHERE id = 1"
+  ).first<{ password_hash: string }>()
+}
+
+async function dashboardConfigured(env: Env) {
+  return Boolean(await dashboardAccount(env))
+}
+
+function hasSameOrigin(context: Context<{ Bindings: Env }>) {
+  const origin = context.req.header("Origin")
+  return !origin || origin === new URL(context.req.url).origin
+}
+
+async function startDashboardSession(context: Context<{ Bindings: Env }>) {
+  const token = randomToken()
+  const tokenHash = await sha256(token)
+  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
+  await context.env.DB.batch([
+    context.env.DB.prepare("DELETE FROM sessions WHERE expires_at <= ?").bind(
+      new Date().toISOString()
+    ),
+    context.env.DB.prepare(
+      "INSERT INTO sessions (token_hash, expires_at) VALUES (?, ?)"
+    ).bind(tokenHash, expiresAt),
+  ])
+  const secure =
+    new URL(context.req.url).protocol === "https:" ? "; Secure" : ""
+  context.header(
+    "Set-Cookie",
+    `pulso_session=${encodeURIComponent(token)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=604800${secure}`
+  )
+}
+
 app.onError((error, context) => {
   console.error("request_failed", {
     route: context.req.path.startsWith("/api/webhooks/kiwify")
@@ -65,13 +114,14 @@ app.use("/api/*", async (context, next) => {
   const path = context.req.path
   const isPublic =
     path === "/api/health" ||
+    path === "/api/auth/setup" ||
     path === "/api/auth/login" ||
     path === "/api/auth/session" ||
     path === "/api/webhooks/hotmart" ||
     path === "/api/webhooks/kiwify"
   if (isPublic) return next()
 
-  if (!context.env.DASHBOARD_PASSWORD) {
+  if (!(await dashboardConfigured(context.env))) {
     return context.json(
       { error: "O acesso privado ainda não foi configurado no Worker." },
       503
@@ -91,7 +141,7 @@ app.use("/api/*", async (context, next) => {
 })
 
 app.use("/auth/meta/*", async (context, next) => {
-  if (!context.env.DASHBOARD_PASSWORD)
+  if (!(await dashboardConfigured(context.env)))
     return context.redirect("/?access_error=not_configured")
   const token = readCookie(context.req.raw, "pulso_session")
   if (!token) return context.redirect("/?access=login")
@@ -104,60 +154,135 @@ app.use("/auth/meta/*", async (context, next) => {
   await next()
 })
 
-app.get("/api/health", (context) =>
+app.get("/api/health", async (context) =>
   context.json({
     status: "ok",
-    privateAccessConfigured: Boolean(context.env.DASHBOARD_PASSWORD),
+    privateAccessConfigured: await dashboardConfigured(context.env),
   })
 )
 
 app.get("/api/auth/session", async (context) => {
-  const configured = Boolean(context.env.DASHBOARD_PASSWORD)
+  const account = await dashboardAccount(context.env)
+  const configured = Boolean(account)
   const token = readCookie(context.req.raw, "pulso_session")
   if (!configured || !token)
-    return context.json({ configured, authenticated: false })
+    return context.json({
+      configured,
+      setupRequired: !configured,
+      authenticated: false,
+    })
   const session = await context.env.DB.prepare(
     "SELECT token_hash FROM sessions WHERE token_hash = ? AND expires_at > ?"
   )
     .bind(await sha256(token), new Date().toISOString())
     .first<{ token_hash: string }>()
-  return context.json({ configured, authenticated: Boolean(session) })
+  return context.json({
+    configured,
+    setupRequired: !configured,
+    authenticated: Boolean(session),
+  })
+})
+
+app.post("/api/auth/setup", async (context) => {
+  if (!hasSameOrigin(context))
+    return context.json({ error: "Origem da solicitação inválida." }, 403)
+  if (await dashboardConfigured(context.env))
+    return context.json({ error: "A conta administrativa já foi criada." }, 409)
+  const body = await context.req
+    .json<{ password?: string; confirmPassword?: string }>()
+    .catch(() => null)
+  const password = typeof body?.password === "string" ? body.password : ""
+  const confirmPassword =
+    typeof body?.confirmPassword === "string" ? body.confirmPassword : ""
+  if (password.length < 12 || password.length > 128)
+    return context.json(
+      { error: "Use uma senha com pelo menos 12 caracteres." },
+      400
+    )
+  if (password !== confirmPassword)
+    return context.json({ error: "As senhas não coincidem." }, 400)
+
+  const passwordHash = await createPasswordHash(password)
+  const result = await context.env.DB.prepare(
+    "INSERT INTO owner_account (id, password_hash) VALUES (1, ?) ON CONFLICT(id) DO NOTHING"
+  )
+    .bind(passwordHash)
+    .run()
+  if (result.meta.changes !== 1)
+    return context.json({ error: "A conta administrativa já foi criada." }, 409)
+
+  await startDashboardSession(context)
+  return context.json({ configured: true, authenticated: true }, 201)
 })
 
 app.post("/api/auth/login", async (context) => {
-  if (!context.env.DASHBOARD_PASSWORD) {
+  if (!hasSameOrigin(context))
+    return context.json({ error: "Origem da solicitação inválida." }, 403)
+  const account = await dashboardAccount(context.env)
+  if (!account) {
     return context.json(
-      { error: "Configure DASHBOARD_PASSWORD para ativar o acesso privado." },
-      503
+      { error: "Crie a conta administrativa para acessar o workspace." },
+      409
     )
   }
   const body = await context.req.json<{ password?: string }>().catch(() => null)
   const password = typeof body?.password === "string" ? body.password : ""
   if (
     password.length > 200 ||
-    !(await secretsMatch(password, context.env.DASHBOARD_PASSWORD))
+    !(await verifyPassword(password, account.password_hash))
   ) {
     return context.json({ error: "Senha incorreta." }, 401)
   }
-
-  const token = randomToken()
-  const tokenHash = await sha256(token)
-  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
-  await context.env.DB.batch([
-    context.env.DB.prepare("DELETE FROM sessions WHERE expires_at <= ?").bind(
-      new Date().toISOString()
-    ),
-    context.env.DB.prepare(
-      "INSERT INTO sessions (token_hash, expires_at) VALUES (?, ?)"
-    ).bind(tokenHash, expiresAt),
-  ])
-  const secure =
-    new URL(context.req.url).protocol === "https:" ? "; Secure" : ""
-  context.header(
-    "Set-Cookie",
-    `pulso_session=${encodeURIComponent(token)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=604800${secure}`
-  )
+  await startDashboardSession(context)
   return context.json({ authenticated: true })
+})
+
+app.put("/api/auth/password", async (context) => {
+  if (!hasSameOrigin(context))
+    return context.json({ error: "Origem da solicitação inválida." }, 403)
+  const account = await dashboardAccount(context.env)
+  if (!account)
+    return context.json(
+      { error: "A conta administrativa não foi encontrada." },
+      409
+    )
+  const body = await context.req
+    .json<{
+      currentPassword?: string
+      newPassword?: string
+      confirmPassword?: string
+    }>()
+    .catch(() => null)
+  const currentPassword =
+    typeof body?.currentPassword === "string" ? body.currentPassword : ""
+  const newPassword =
+    typeof body?.newPassword === "string" ? body.newPassword : ""
+  const confirmPassword =
+    typeof body?.confirmPassword === "string" ? body.confirmPassword : ""
+  if (!(await verifyPassword(currentPassword, account.password_hash)))
+    return context.json({ error: "A senha atual está incorreta." }, 401)
+  if (newPassword.length < 12 || newPassword.length > 128)
+    return context.json(
+      { error: "Use uma senha com pelo menos 12 caracteres." },
+      400
+    )
+  if (newPassword !== confirmPassword)
+    return context.json({ error: "As novas senhas não coincidem." }, 400)
+
+  const passwordHash = await createPasswordHash(newPassword)
+  const result = await context.env.DB.prepare(
+    "UPDATE owner_account SET password_hash = ? WHERE id = 1 AND password_hash = ?"
+  )
+    .bind(passwordHash, account.password_hash)
+    .run()
+  if (result.meta.changes !== 1)
+    return context.json(
+      { error: "A senha foi alterada em outra solicitação. Entre novamente." },
+      409
+    )
+  await context.env.DB.prepare("DELETE FROM sessions").run()
+  await startDashboardSession(context)
+  return context.json({ changed: true })
 })
 
 app.post("/api/auth/logout", async (context) => {
@@ -207,6 +332,51 @@ app.get("/api/integrations", async (context) => {
   return context.json({ integrations: result.results })
 })
 
+app.use("/api/settings/*", async (context, next) => {
+  context.header("Cache-Control", "no-store")
+  await next()
+})
+
+app.get("/api/settings", async (context) => {
+  context.header("Cache-Control", "no-store")
+  return context.json(await workspaceSettingsView(context.env, context.req.url))
+})
+
+app.put("/api/settings/meta", async (context) => {
+  if (!hasSameOrigin(context))
+    return context.json({ error: "Origem da solicitação inválida." }, 403)
+  const body = await context.req.json<unknown>().catch(() => null)
+  try {
+    return context.json(await saveMetaConfiguration(context.env, body))
+  } catch (error) {
+    return context.json({ error: errorText(error) }, 400)
+  }
+})
+
+app.put("/api/settings/webhooks", async (context) => {
+  if (!hasSameOrigin(context))
+    return context.json({ error: "Origem da solicitação inválida." }, 403)
+  const body = await context.req.json<unknown>().catch(() => null)
+  try {
+    await saveWebhookTokens(context.env, body)
+    return context.json(
+      await workspaceSettingsView(context.env, context.req.url)
+    )
+  } catch (error) {
+    return context.json({ error: errorText(error) }, 400)
+  }
+})
+
+app.delete("/api/settings/webhooks/:provider", async (context) => {
+  if (!hasSameOrigin(context))
+    return context.json({ error: "Origem da solicitação inválida." }, 403)
+  const provider = context.req.param("provider")
+  if (provider !== "hotmart" && provider !== "kiwify")
+    return context.json({ error: "Gateway não suportado." }, 404)
+  await removeWebhookToken(context.env, provider)
+  return context.json(await workspaceSettingsView(context.env, context.req.url))
+})
+
 app.post("/api/integrations/:provider/credentials", async (context) => {
   const provider = context.req.param("provider")
   if (provider !== "hotmart" && provider !== "kiwify")
@@ -230,15 +400,13 @@ app.delete("/api/integrations/:provider/credentials", async (context) => {
   return context.json({ provider, connected: false })
 })
 
-app.get("/api/integrations/webhooks", (context) => {
-  const hotmart = new URL("/api/webhooks/hotmart", context.req.url).toString()
-  const kiwify = context.env.KIWIFY_WEBHOOK_TOKEN
-    ? new URL(
-        `/api/webhooks/kiwify?token=${encodeURIComponent(context.env.KIWIFY_WEBHOOK_TOKEN)}`,
-        context.req.url
-      ).toString()
-    : null
-  return context.json({ hotmart, kiwify })
+app.get("/api/integrations/webhooks", async (context) => {
+  context.header("Cache-Control", "no-store")
+  const { webhooks } = await workspaceSettingsView(context.env, context.req.url)
+  return context.json({
+    hotmart: webhooks.hotmartUrl,
+    kiwify: webhooks.kiwifyUrl,
+  })
 })
 
 app.get("/api/meta/accounts", async (context) => {
