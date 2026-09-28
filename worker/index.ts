@@ -1,5 +1,6 @@
 import { Hono, type Context } from "hono"
 import { calculatePerformance } from "../src/lib/metrics"
+import { ensureDatabaseSchema } from "./database"
 import {
   completeMetaAuthorization,
   beginMetaAuthorization,
@@ -111,6 +112,8 @@ app.onError((error, context) => {
 })
 
 app.use("/api/*", async (context, next) => {
+  await ensureDatabaseSchema(context.env.DB)
+
   const path = context.req.path
   const isPublic =
     path === "/api/health" ||

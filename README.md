@@ -40,6 +40,11 @@ No primeiro acesso ao endereço publicado, crie a senha administrativa. Essa
 conta é criada uma única vez por instalação. Depois, configure as integrações
 em **Integrações** no próprio painel:
 
+O esquema do D1 é descrito pelos arquivos SQL em `migrations/`. Normalmente o
+deploy aplica esses arquivos antes de publicar o Worker. Se esse passo for
+omitido, o próprio Worker aplica as migrations pendentes quando a API recebe o
+primeiro acesso; não é necessário rodar comandos no terminal.
+
 - Informe App ID, App Secret e versão da Graph API do aplicativo Meta.
 - Informe o HOTTOK da Hotmart e um token privado para o webhook da Kiwify.
 - Conecte as credenciais de API da Hotmart e da Kiwify nos cartões abaixo.
@@ -50,9 +55,8 @@ Os campos de segredo ficam vazios após salvar e não retornam o valor original.
 A URL do webhook Kiwify inclui o token exigido pelo gateway. Para substituir
 um segredo, digite o novo valor no campo correspondente.
 
-Para deploy manual após configurar Wrangler e os bindings, rode
-`npm run build && npm run deploy`. O script de deploy aplica as migrações
-remotas antes de publicar o Worker.
+Para deploy manual após configurar Wrangler e os bindings, rode `npm run deploy`.
+O script compila o app, aplica as migrations remotas e publica o Worker.
 
 ## Integrações e atribuição
 
