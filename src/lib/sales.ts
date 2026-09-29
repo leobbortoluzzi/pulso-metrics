@@ -47,7 +47,8 @@ export function summarizeSales(rows: Sale[]): SalesSummary {
     0
   )
   const settledCount = approved.length + refunded.length + chargebacks.length
-  const netRevenue = approvedRevenue - refundedRevenue - chargebackRevenue
+  // Each transaction has its current status, rather than separate ledger entries.
+  const netRevenue = approvedRevenue
   return {
     total: rows.length,
     approved: approved.length,

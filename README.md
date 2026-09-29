@@ -1,4 +1,4 @@
-# Pulso Metrics
+# selfmetric
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/leobbortoluzzi/pulso-metrics)
 
@@ -12,7 +12,7 @@ sob demanda.
 - `src/`: interface React 19, estilos e cálculos compartilhados.
 - `worker/`: API Hono, OAuth da Meta, webhooks, filas de sincronização e PTAX.
 - `migrations/`: esquema D1 para sessões, integrações, métricas, vendas e filas.
-- `tests/`: testes de fórmulas e normalização dos eventos dos gateways.
+- `tests/`: testes de fórmulas, ingestão de vendas, atribuição e retomada das filas.
 - `wrangler.jsonc`: bindings Cloudflare para Worker, D1 e Queues.
 
 ## Rodar localmente
@@ -45,9 +45,9 @@ deploy aplica esses arquivos antes de publicar o Worker. Se esse passo for
 omitido, o próprio Worker aplica as migrations pendentes quando a API recebe o
 primeiro acesso; não é necessário rodar comandos no terminal.
 
-- Informe App ID, App Secret e versão da Graph API do aplicativo Meta.
-- Informe o HOTTOK da Hotmart e um token privado para o webhook da Kiwify.
-- Conecte as credenciais de API da Hotmart e da Kiwify nos cartões abaixo.
+- Na aba **Meta Ads**, informe App ID, App Secret e versão da Graph API, salve o aplicativo e conecte suas contas de anúncio.
+- Nas abas **Hotmart** e **Kiwify**, conecte as credenciais de API e configure o token e a URL do webhook de cada gateway.
+- Para alterar a senha do dashboard, acesse **Segurança** na lateral ou **Alterar senha** no menu da conta.
 
 Os segredos são criptografados antes de serem salvos no D1; a chave de dados é
 gerada automaticamente e mantida no Durable Object privado de cada instalação.
@@ -79,6 +79,18 @@ reconciliação. A conversão de moedas usa a cotação de venda PTAX; vendas e
 métricas sem cotação ficam pendentes até a fila obter uma cotação válida.
 Eventos guardam apenas dados da transação e atribuição, sem nome ou contato do
 comprador.
+
+As importações processam até cinco registros por execução e salvam o progresso
+no D1 antes de enviar a próxima etapa à fila. Falhas retomam a página pendente.
+Webhooks duplicados não alteram a venda; eventos antigos não substituem um estado
+mais recente. Sem a data do evento, reembolsos e chargebacks têm precedência sobre
+aprovações. A data da compra é independente da data de atualização do gateway.
+
+O ID do anúncio permite recuperar a conta, a campanha e o conjunto a partir das
+métricas da Meta. Ao atualizar os anúncios, a sincronização também completa os
+vínculos das vendas que chegaram antes dessas métricas. A receita considera apenas
+transações atualmente aprovadas; reembolsos e chargebacks são apresentados
+separadamente e não são descontados uma segunda vez.
 
 ## Verificações
 

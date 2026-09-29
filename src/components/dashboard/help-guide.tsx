@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react"
 import { ArrowRight, CircleHelp, X } from "lucide-react"
+import { Button } from "@/components/ui/button"
 
 type HelpGuideProps = {
   onClose: () => void
@@ -71,20 +72,23 @@ export function HelpGuide({ onClose, onOpenIntegrations }: HelpGuideProps) {
           </li>
         </ol>
         <div className="help-guide-actions">
-          <button
-            className="button button-secondary"
+          <Button
+            className="dashboard-action dashboard-action-secondary"
+            variant="outline"
+            size="lg"
             onClick={onClose}
             type="button"
           >
             Fechar
-          </button>
-          <button
-            className="button button-primary"
+          </Button>
+          <Button
+            className="dashboard-action"
+            size="lg"
             onClick={onOpenIntegrations}
             type="button"
           >
-            Abrir integrações <ArrowRight size={15} />
-          </button>
+            Abrir integrações <ArrowRight data-icon="inline-end" />
+          </Button>
         </div>
       </section>
     </div>

@@ -1,12 +1,14 @@
 import initialMigration from "../migrations/0001_initial.sql?raw"
 import workspaceMigration from "../migrations/0002_workspace_setup.sql?raw"
 import funnelMigration from "../migrations/0003_funnel_metrics.sql?raw"
+import reliableSalesMigration from "../migrations/0004_reliable_sales_sync.sql?raw"
 
 // Keep this registry in sync with the ordered SQL files in migrations/.
 const migrations = [
   { name: "0001_initial.sql", sql: initialMigration },
   { name: "0002_workspace_setup.sql", sql: workspaceMigration },
   { name: "0003_funnel_metrics.sql", sql: funnelMigration },
+  { name: "0004_reliable_sales_sync.sql", sql: reliableSalesMigration },
 ]
 
 const migrationTable = "d1_migrations"

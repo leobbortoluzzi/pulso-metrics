@@ -2,18 +2,16 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 @import "@fontsource-variable/inter";
-@import "@fontsource-variable/nunito-sans";
-@import "@fontsource-variable/figtree";
 
 @custom-variant dark (&:is(.dark *));
 
 :root {
-  font-family: "Nunito Sans Variable", sans-serif;
+  font-family: "Inter Variable", sans-serif;
   color: var(--foreground);
   background: var(--background);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
-  --font-heading: "Figtree Variable", sans-serif;
+  --font-heading: "Inter Variable", sans-serif;
   --primary: oklch(0.16 0 0);
   --primary-focus: var(--ring);
   --primary-on-dark: var(--primary);
@@ -72,12 +70,12 @@ body {
   min-height: 100vh;
   background: var(--canvas);
 }
-button,
-input,
+button:not([data-slot="button"]),
+input:not([data-slot="input"]),
 select {
   font: inherit;
 }
-button {
+button:not([data-slot="button"]) {
   color: inherit;
 }
 button:focus-visible,
@@ -2184,7 +2182,7 @@ p {
 .webhook-url-row code {
   overflow: hidden;
   color: #656565;
-  font-family: "SFMono-Regular", Consolas, monospace;
+  font-family: var(--font-sans);
   font-size: 9px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -3561,8 +3559,25 @@ input:focus-visible {
 }
 
 .help-guide-steps span {
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 13px;
+  line-height: 1.6;
+}
+
+.help-guide-dialog {
+  border-color: var(--border);
+  background: var(--card);
+  color: var(--card-foreground);
+}
+
+.help-guide-dialog h2,
+.help-guide-steps strong,
+.help-guide-steps li::marker {
+  color: var(--card-foreground);
+}
+
+.help-guide-dialog .panel-kicker {
+  color: var(--muted-foreground);
 }
 
 .help-guide-actions {
@@ -3706,8 +3721,9 @@ input:focus-visible {
 }
 
 @theme inline {
-  --font-sans: "Nunito Sans Variable", sans-serif;
-  --font-heading: "Figtree Variable", sans-serif;
+  --font-sans: "Inter Variable", sans-serif;
+  --font-mono: "Inter Variable", sans-serif;
+  --font-heading: "Inter Variable", sans-serif;
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -3760,9 +3776,9 @@ input:focus-visible {
   }
 }
 
-/* Pulso visual system */
+/* Selfmetric visual system */
 :root {
-  font-family: "Nunito Sans Variable", sans-serif;
+  font-family: "Inter Variable", sans-serif;
   color: var(--foreground);
   background: var(--background);
   --ink: var(--foreground);
@@ -5287,7 +5303,7 @@ select:focus-visible {
 }
 
 .metrics-grid {
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 14px;
 }
 
@@ -5297,11 +5313,14 @@ select:focus-visible {
 
 .metric-label {
   font-size: 14px;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .metric-info {
   width: 18px;
   height: 18px;
+  flex-shrink: 0;
   font-size: 11px;
 }
 
@@ -5408,6 +5427,7 @@ select:focus-visible {
 
 .analytics-grid {
   gap: 16px;
+  grid-template-columns: minmax(0, 1fr);
   margin-top: 8px;
 }
 
@@ -6320,6 +6340,105 @@ select:focus-visible {
   background: var(--muted);
   color: var(--foreground);
   font-size: 0.92em;
+}
+
+.integration-tabs {
+  gap: 24px;
+}
+
+.integration-tab-list[data-slot="tabs-list"] {
+  height: 44px;
+  width: min(100%, 420px);
+  padding: 4px;
+}
+
+.integration-section-heading {
+  margin-bottom: 22px;
+}
+
+.integration-section-heading h2 {
+  margin: 0 0 8px;
+  font-size: 22px;
+  line-height: 1.3;
+}
+
+.integration-section-heading p {
+  margin: 0;
+  color: var(--muted-foreground);
+  line-height: 1.6;
+}
+
+.integration-settings-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: 20px;
+}
+
+.settings-panel {
+  min-width: 0;
+  --card-spacing: 24px;
+}
+
+.settings-panel [data-slot="card-header"] {
+  gap: 10px;
+}
+
+.settings-panel [data-slot="input"] {
+  min-height: 44px;
+}
+
+.settings-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.settings-actions [data-slot="button"] {
+  min-height: 42px;
+}
+
+.integration-connection-content {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+.integration-connection-content p {
+  margin: 0;
+  color: var(--muted-foreground);
+  line-height: 1.6;
+}
+
+.integration-privacy-note {
+  margin-top: 24px;
+}
+
+.security-settings {
+  width: min(100%, 640px);
+}
+
+.gateway-credentials-dialog {
+  gap: 24px;
+  max-height: calc(100dvh - 32px);
+  overflow-y: auto;
+}
+
+.gateway-credentials-dialog [data-slot="input"] {
+  min-height: 44px;
+}
+
+@media (max-width: 1000px) {
+  .integration-settings-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 760px) {
+  .settings-panel {
+    --card-spacing: 20px;
+  }
 }
 
 @media (max-width: 1250px) {

@@ -1,5 +1,6 @@
 import { convertToBrl } from "../src/lib/metrics"
-import { secretsMatch } from "./secure-store"
+import { secretsMatch, sha256 } from "./secure-store"
+import { attributionDate, resolveSaleAttribution } from "./attribution"
 import { readWebhookToken } from "./settings"
 import type { QueueMessage } from "./messages"
 
@@ -15,6 +16,8 @@ type NormalizedSale = {
   currency: string
   amountMinor: number
   occurredAt: string
+  hasPurchaseDate: boolean
+  eventOccurredAt: string | null
   campaignId: string | null
   adsetId: string | null
   adId: string | null
@@ -109,9 +112,7 @@ function dateValue(value: unknown) {
     numeric !== null
       ? new Date(numeric > 10_000_000_000 ? numeric : numeric * 1000)
       : new Date(asText(value) ?? "")
-  return Number.isNaN(date.getTime())
-    ? new Date().toISOString()
-    : date.toISOString()
+  return Number.isNaN(date.getTime()) ? null : date.toISOString()
 }
 
 function normalizeId(value: unknown) {
@@ -141,6 +142,8 @@ function getAttribution(
   | "currency"
   | "amountMinor"
   | "occurredAt"
+  | "hasPurchaseDate"
+  | "eventOccurredAt"
 > {
   const body = asRecord(bodyValue)
   const sale = asRecord(saleValue)
@@ -337,14 +340,24 @@ export function normalizeSale(
                   currency,
                 }).resolvedOptions().maximumFractionDigits ?? 2)
           )
-  const occurredAt = dateValue(
+  const purchaseDate = dateValue(
     firstValue(
       purchase.approved_date,
       sale.approved_date,
       purchase.order_date,
       sale.created_at,
       body.created_at,
-      body.createdAt,
+      body.createdAt
+    )
+  )
+  const occurredAt = purchaseDate ?? new Date().toISOString()
+  const eventOccurredAt = dateValue(
+    firstValue(
+      body.creation_date,
+      body.event_created_at,
+      body.updated_at,
+      sale.updated_at,
+      purchase.updated_at,
       body.timestamp
     )
   )
@@ -376,39 +389,10 @@ export function normalizeSale(
     currency,
     amountMinor,
     occurredAt,
+    hasPurchaseDate: purchaseDate !== null,
+    eventOccurredAt,
     ...getAttribution(provider, bodyValue, sale, purchase),
   }
-}
-
-function localDate(isoDate: string, timeZone: string) {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(new Date(isoDate))
-  const values = Object.fromEntries(
-    parts.map((part) => [part.type, part.value])
-  )
-  return `${values.year}-${values.month}-${values.day}`
-}
-
-async function attributedAccount(db: D1Database, sale: NormalizedSale) {
-  for (const [column, value] of [
-    ["ad_id", sale.adId],
-    ["adset_id", sale.adsetId],
-    ["campaign_id", sale.campaignId],
-  ] as const) {
-    if (!value) continue
-    const account = await db
-      .prepare(
-        `SELECT a.id, a.timezone_name FROM ad_accounts a JOIN ad_metrics m ON m.account_id = a.id WHERE m.${column} = ? ORDER BY m.date DESC LIMIT 1`
-      )
-      .bind(value)
-      .first<{ id: string; timezone_name: string }>()
-    if (account) return account
-  }
-  return null
 }
 
 export async function ingestSale(
@@ -421,45 +405,69 @@ export async function ingestSale(
   if (!sale)
     throw new Error("O evento não contém um identificador de transação.")
 
-  const account = await attributedAccount(env.DB, sale)
-  const timeZone = account?.timezone_name ?? "UTC"
-  const attributionDate = localDate(sale.occurredAt, timeZone)
+  const existing = await env.DB.prepare(
+    `SELECT s.occurred_at, a.timezone_name FROM sales s
+     LEFT JOIN ad_accounts a ON a.id = s.account_id
+     WHERE s.provider = ? AND s.external_id = ?`
+  )
+    .bind(provider, sale.externalId)
+    .first<{ occurred_at: string; timezone_name: string | null }>()
+  if (!sale.hasPurchaseDate && existing) sale.occurredAt = existing.occurred_at
+  const attribution = await resolveSaleAttribution(env.DB, sale)
+  const timeZone = attribution?.timeZone ?? existing?.timezone_name ?? "UTC"
+  const saleDate = attributionDate(sale.occurredAt, timeZone)
   const event = asRecord(body)
   const eventName =
     asText(
       firstValue(event.event, event.event_type, event.order_status, sale.status)
     ) ?? sale.status
-  const eventId = asText(firstValue(event.id, event.event_id, event.webhook_id))
-  const eventKey = (
-    eventId ?? `${sale.externalId}:${eventName}:${sale.status}`
-  ).slice(0, 250)
-  const duplicate = await env.DB.prepare(
-    "SELECT event_key FROM webhook_events WHERE provider = ? AND event_key = ?"
+  // API sale IDs identify transactions, not individual webhook deliveries.
+  const eventId = asText(
+    firstValue(
+      event.event_id,
+      event.webhook_id,
+      event.event || event.event_type ? event.id : null
+    )
   )
-    .bind(provider, eventKey)
-    .first<{ event_key: string }>()
+  const eventKey = await sha256(
+    JSON.stringify(
+      eventId
+        ? ["event", eventId]
+        : [
+            "sale",
+            sale.externalId,
+            eventName,
+            sale.status,
+            sale.eventOccurredAt,
+            sale.amountMinor,
+            sale.currency,
+          ]
+    )
+  )
   const fxRate =
     sale.currency === "BRL"
       ? { selling_rate: 1 }
       : await env.DB.prepare(
           "SELECT selling_rate FROM fx_rates WHERE currency = ? AND date <= ? ORDER BY date DESC LIMIT 1"
         )
-          .bind(sale.currency, attributionDate)
+          .bind(sale.currency, saleDate)
           .first<{ selling_rate: number }>()
   const amountBrl = fxRate
     ? convertToBrl(sale.amountMinor, sale.currency, fxRate.selling_rate)
     : null
 
-  await env.DB.batch([
-    env.DB.prepare(
-      "INSERT INTO webhook_events (provider, event_key, processed_at) VALUES (?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')) ON CONFLICT(provider, event_key) DO NOTHING"
-    ).bind(provider, eventKey),
+  // D1 batches are transactional. Check the delivery inside the transaction,
+  // then record it, so concurrent retries cannot both update the transaction.
+  const results = await env.DB.batch([
     env.DB.prepare(
       `INSERT INTO sales (
       provider, external_id, status, product_id, product_name, currency, amount_minor,
       amount_brl, occurred_at, attribution_date, account_id, campaign_id, adset_id,
-      ad_id, utm_source, utm_medium, utm_campaign, utm_content, utm_term
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ad_id, utm_source, utm_medium, utm_campaign, utm_content, utm_term, last_event_at
+    ) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+      WHERE NOT EXISTS (
+        SELECT 1 FROM webhook_events WHERE provider = ? AND event_key = ?
+      )
     ON CONFLICT(provider, external_id) DO UPDATE SET
       status = excluded.status,
       product_id = excluded.product_id,
@@ -469,6 +477,7 @@ export async function ingestSale(
       amount_brl = excluded.amount_brl,
       occurred_at = excluded.occurred_at,
       attribution_date = excluded.attribution_date,
+      last_event_at = excluded.last_event_at,
       account_id = COALESCE(excluded.account_id, sales.account_id),
       campaign_id = COALESCE(excluded.campaign_id, sales.campaign_id),
       adset_id = COALESCE(excluded.adset_id, sales.adset_id),
@@ -478,7 +487,18 @@ export async function ingestSale(
       utm_campaign = COALESCE(excluded.utm_campaign, sales.utm_campaign),
       utm_content = COALESCE(excluded.utm_content, sales.utm_content),
       utm_term = COALESCE(excluded.utm_term, sales.utm_term),
-      updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`
+      updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+    WHERE (
+      excluded.last_event_at IS NOT NULL AND sales.last_event_at IS NOT NULL
+      AND excluded.last_event_at > sales.last_event_at
+    ) OR (
+      (excluded.last_event_at IS NULL OR sales.last_event_at IS NULL
+        OR excluded.last_event_at = sales.last_event_at)
+      AND CASE excluded.status WHEN 'chargeback' THEN 3 WHEN 'refunded' THEN 2
+        WHEN 'approved' THEN 1 ELSE 0 END
+        >= CASE sales.status WHEN 'chargeback' THEN 3 WHEN 'refunded' THEN 2
+          WHEN 'approved' THEN 1 ELSE 0 END
+    )`
     ).bind(
       provider,
       sale.externalId,
@@ -489,34 +509,50 @@ export async function ingestSale(
       sale.amountMinor,
       amountBrl,
       sale.occurredAt,
-      attributionDate,
-      account?.id ?? null,
-      sale.campaignId,
-      sale.adsetId,
-      sale.adId,
+      saleDate,
+      attribution?.accountId ?? null,
+      attribution?.campaignId ?? sale.campaignId,
+      attribution?.adsetId ?? sale.adsetId,
+      attribution?.adId ?? sale.adId,
       sale.utmSource,
       sale.utmMedium,
       sale.utmCampaign,
       sale.utmContent,
-      sale.utmTerm
+      sale.utmTerm,
+      sale.eventOccurredAt,
+      provider,
+      eventKey
     ),
+    env.DB.prepare(
+      "INSERT INTO webhook_events (provider, event_key, processed_at) VALUES (?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')) ON CONFLICT(provider, event_key) DO NOTHING"
+    ).bind(provider, eventKey),
   ])
-
-  if (queueFx && sale.currency !== "BRL" && amountBrl === null) {
+  const stored = await env.DB.prepare(
+    "SELECT status, currency, attribution_date, amount_brl FROM sales WHERE provider = ? AND external_id = ?"
+  )
+    .bind(provider, sale.externalId)
+    .first<{
+      status: SaleStatus
+      currency: string
+      attribution_date: string
+      amount_brl: number | null
+    }>()
+  if (!stored) throw new Error("Não foi possível persistir a venda.")
+  if (queueFx && stored.currency !== "BRL" && stored.amount_brl === null) {
     const message: QueueMessage = {
       type: "fx_rate",
-      currency: sale.currency,
-      date: attributionDate,
+      currency: stored.currency,
+      date: stored.attribution_date,
     }
     await env.SYNC_QUEUE.send(message)
   }
 
   return {
-    duplicateEvent: Boolean(duplicate),
-    status: sale.status,
-    currency: sale.currency,
-    date: attributionDate,
-    needsFx: amountBrl === null,
+    duplicateEvent: results[1].meta.changes === 0,
+    status: stored.status,
+    currency: stored.currency,
+    date: stored.attribution_date,
+    needsFx: stored.amount_brl === null,
   }
 }
 

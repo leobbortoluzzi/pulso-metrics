@@ -5,6 +5,7 @@ export type QueueMessage =
       accountId: string
       from: string
       to: string
+      version?: number
     }
   | {
       type: "gateway_sync"
@@ -12,5 +13,6 @@ export type QueueMessage =
       provider: "hotmart" | "kiwify"
       from: string
       to: string
+      version?: number
     }
   | { type: "fx_rate"; currency: string; date: string }

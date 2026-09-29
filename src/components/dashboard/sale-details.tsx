@@ -87,7 +87,7 @@ export function SaleDetails({ sale, onClose, onToast }: SaleDetailsProps) {
           </div>
         </dl>
         <p className="sale-details-privacy">
-          O Pulso não armazena dados pessoais do comprador nesta tela.
+          O selfmetric não armazena dados pessoais do comprador nesta tela.
         </p>
         <button
           className="button button-secondary"

@@ -7,7 +7,6 @@ import {
   BarChart3,
   Bell,
   Check,
-  ChevronRight,
   CircleHelp,
   Clock3,
   Copy,
@@ -28,11 +27,11 @@ import {
   Search,
   Settings2,
   ShoppingBag,
+  ShieldCheck,
   Sparkles,
   UserRound,
   Wallet,
   X,
-  Zap,
 } from "lucide-react"
 import { useEffect, useMemo, useState, type FormEvent } from "react"
 import { HelpGuide } from "@/components/dashboard/help-guide"
@@ -46,6 +45,7 @@ import {
 import { Pagination } from "@/components/dashboard/pagination"
 import { Popover } from "@/components/dashboard/popover"
 import { SaleDetails } from "@/components/dashboard/sale-details"
+import { SecurityPage } from "@/components/dashboard/security-page"
 import {
   Alert,
   AlertAction,
@@ -81,6 +81,20 @@ import {
 } from "@/components/ui/empty"
 import { Input } from "@/components/ui/input"
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import {
+  Field,
+  FieldDescription,
+  FieldGroup,
+  FieldLabel,
+} from "@/components/ui/field"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import {
   Select,
   SelectContent,
   SelectGroup,
@@ -88,7 +102,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { Separator } from "@/components/ui/separator"
 import {
   Table,
   TableBody,
@@ -125,7 +138,8 @@ import {
   type Sale,
 } from "@/lib/dashboard-data"
 
-type Page = "overview" | "campaigns" | "funnel" | "sales" | "integrations"
+type Page =
+  "overview" | "campaigns" | "funnel" | "sales" | "integrations" | "security"
 type Period = number
 const periodOptions: Period[] = [7, 14, 30, 90, 120]
 type Level = "Campanhas" | "Conjuntos" | "Anúncios"
@@ -334,6 +348,7 @@ function App() {
     "checking" | "setup" | "demo" | "authenticated" | "required" | "error"
   >("checking")
   const [page, setPage] = useState<Page>("overview")
+  const [integrationTab, setIntegrationTab] = useState("meta")
   const [period, setPeriod] = useState<Period>(14)
   const [dateRange, setDateRange] = useState<DateRange>(() =>
     dateRangeForDays(14)
@@ -403,11 +418,6 @@ function App() {
     spend: number
     revenue: number
   }> | null>(null)
-  const [integrationStatus, setIntegrationStatus] = useState({
-    meta: false,
-    hotmart: false,
-    kiwify: false,
-  })
   const [productOptions, setProductOptions] = useState(uniqueProducts)
   const [activeSyncId, setActiveSyncId] = useState("")
   const [dataRefresh, setDataRefresh] = useState(0)
@@ -621,12 +631,7 @@ function App() {
       overviewCampaigns.reduce((sum, campaign) => sum + campaign.revenue, 0) *
       scale
     const demoSalesSummary = summarizeSales(dashboardDemoSales)
-    const revenue = Math.max(
-      0,
-      approvedRevenue -
-        demoSalesSummary.refundedRevenue -
-        demoSalesSummary.chargebackRevenue
-    )
+    const revenue = approvedRevenue
     const orders = Math.round(
       overviewCampaigns.reduce((sum, campaign) => sum + campaign.sales, 0) *
         scale
@@ -823,19 +828,14 @@ function App() {
       setDashboardLoading(true)
       setDashboardError("")
       try {
-        const [
-          dashboardResponse,
-          accountResponse,
-          productsResponse,
-          integrationsResponse,
-        ] = await Promise.all([
-          fetch(`/api/dashboard?${dashboardParams}`, {
-            signal: controller.signal,
-          }),
-          fetch("/api/meta/accounts", { signal: controller.signal }),
-          fetch("/api/products", { signal: controller.signal }),
-          fetch("/api/integrations", { signal: controller.signal }),
-        ])
+        const [dashboardResponse, accountResponse, productsResponse] =
+          await Promise.all([
+            fetch(`/api/dashboard?${dashboardParams}`, {
+              signal: controller.signal,
+            }),
+            fetch("/api/meta/accounts", { signal: controller.signal }),
+            fetch("/api/products", { signal: controller.signal }),
+          ])
         if (controller.signal.aborted) return
         if (dashboardResponse.ok) {
           const result = (await dashboardResponse.json()) as {
@@ -960,25 +960,6 @@ function App() {
             products?: string[]
           }
           setProductOptions(result.products ?? [])
-        }
-        if (integrationsResponse.ok) {
-          const result = (await integrationsResponse.json()) as {
-            integrations?: Array<{
-              provider: string
-              has_token?: number
-              has_credentials?: number
-            }>
-          }
-          const status = { meta: false, hotmart: false, kiwify: false }
-          for (const integration of result.integrations ?? []) {
-            if (integration.provider === "meta")
-              status.meta = integration.has_token === 1
-            if (integration.provider === "hotmart")
-              status.hotmart = integration.has_credentials === 1
-            if (integration.provider === "kiwify")
-              status.kiwify = integration.has_credentials === 1
-          }
-          setIntegrationStatus(status)
         }
       } catch (error) {
         if (!controller.signal.aborted) {
@@ -1544,6 +1525,7 @@ function App() {
   }
 
   function connectAccount() {
+    setIntegrationTab("meta")
     navigate("integrations")
     window.setTimeout(
       () =>
@@ -1630,7 +1612,7 @@ function App() {
               <Activity size={18} strokeWidth={2.6} />
             </span>
             <span>
-              pulso<span className="brand-period">.</span>
+              selfmetric<span className="brand-period">.</span>
             </span>
           </div>
           <div className="panel-kicker">CONFIGURAÇÃO DO WORKSPACE</div>
@@ -1660,7 +1642,7 @@ function App() {
             <Activity size={18} strokeWidth={2.6} />
           </div>
           <span>
-            pulso<span className="brand-period">.</span>
+            selfmetric<span className="brand-period">.</span>
           </span>
           <button
             className="icon-button sidebar-close"
@@ -1669,14 +1651,6 @@ function App() {
           >
             <X size={18} />
           </button>
-        </div>
-
-        <div className="workspace-switcher">
-          <div className="workspace-avatar">P</div>
-          <div className="workspace-copy">
-            <strong>Meu workspace</strong>
-            <span>Workspace único</span>
-          </div>
         </div>
 
         <div className="nav-caption">WORKSPACE</div>
@@ -1688,7 +1662,6 @@ function App() {
           >
             <LayoutDashboard size={18} />
             <span>Visão geral</span>
-            <span className="nav-shortcut">⌘ 1</span>
           </button>
           <button
             className={`nav-item ${page === "campaigns" ? "active" : ""}`}
@@ -1697,7 +1670,6 @@ function App() {
           >
             <Megaphone size={18} />
             <span>Campanhas</span>
-            <span className="nav-shortcut">⌘ 2</span>
           </button>
           <button
             className={`nav-item ${page === "funnel" ? "active" : ""}`}
@@ -1714,7 +1686,6 @@ function App() {
           >
             <ShoppingBag size={18} />
             <span>Vendas</span>
-            <span className="nav-count">{salesTotal}</span>
           </button>
           <button
             className={`nav-item ${page === "integrations" ? "active" : ""}`}
@@ -1723,15 +1694,14 @@ function App() {
           >
             <Link2 size={18} />
             <span>Integrações</span>
-            <span
-              className={
-                integrationStatus.meta ||
-                integrationStatus.hotmart ||
-                integrationStatus.kiwify
-                  ? "nav-dot nav-dot-ready"
-                  : "nav-dot nav-dot-pending"
-              }
-            />
+          </button>
+          <button
+            className={`nav-item ${page === "security" ? "active" : ""}`}
+            onClick={() => navigate("security")}
+            aria-current={page === "security" ? "page" : undefined}
+          >
+            <ShieldCheck size={18} />
+            <span>Segurança</span>
           </button>
         </nav>
 
@@ -1803,17 +1773,7 @@ function App() {
                 <button
                   onClick={() => {
                     close()
-                    navigate("integrations")
-                    window.setTimeout(
-                      () =>
-                        document
-                          .getElementById("account-security")
-                          ?.scrollIntoView({
-                            behavior: "smooth",
-                            block: "center",
-                          }),
-                      0
-                    )
+                    navigate("security")
                   }}
                   type="button"
                 >
@@ -1852,11 +1812,6 @@ function App() {
             >
               <Menu size={19} />
             </button>
-            <div className="breadcrumb">
-              <span>Workspace</span>
-              <ChevronRight size={14} />
-              <strong>{pageTitle(page)}</strong>
-            </div>
           </div>
           <div className="topbar-actions">
             <div className="live-status">
@@ -1926,9 +1881,6 @@ function App() {
             >
               <CircleHelp size={17} /> Ajuda
             </button>
-            <Avatar aria-label="Administrador" className="topbar-avatar">
-              <AvatarFallback>A</AvatarFallback>
-            </Avatar>
           </div>
         </header>
 
@@ -1949,7 +1901,6 @@ function App() {
               setChartMode={setChartMode}
               totals={totals}
               accountOptions={adAccountList}
-              integrationStatus={integrationStatus}
               productOptions={productOptions}
               dailyData={liveDaily ?? undefined}
               demo={authState === "demo"}
@@ -2059,16 +2010,19 @@ function App() {
           )}
           {page === "integrations" && (
             <IntegrationsPage
+              selectedPlatform={integrationTab}
+              onPlatformChange={setIntegrationTab}
               onSync={requestSync}
               syncing={syncing}
               onToast={setToast}
               onHelp={() => setHelpOpen(true)}
             />
           )}
+          {page === "security" && <SecurityPage onToast={setToast} />}
         </main>
         <footer className="app-footer">
           <span>
-            pulso<span className="brand-period">.</span>{" "}
+            selfmetric<span className="brand-period">.</span>{" "}
             <span className="footer-muted">seus números, no ritmo certo.</span>
           </span>
           <span>
@@ -2140,7 +2094,6 @@ type OverviewPageProps = {
   setChartMode: (mode: "Receita" | "Investimento") => void
   totals: DashboardTotals
   accountOptions: AdAccount[]
-  integrationStatus: { meta: boolean; hotmart: boolean; kiwify: boolean }
   dailyData?: Array<{ label: string; spend: number; revenue: number }>
   demo: boolean
   onSync: () => void
@@ -2632,7 +2585,7 @@ function OverviewPage(props: OverviewPageProps) {
         <MetricCard
           label="Receita líquida"
           value={currency.format(props.totals.revenue)}
-          detail="Vendas aprovadas menos reembolsos e chargebacks"
+          detail="Valor das vendas aprovadas; reembolsos e chargebacks excluídos"
           icon={<CircleDollarIcon />}
           iconStyle="lime"
         />
@@ -2665,22 +2618,22 @@ function OverviewPage(props: OverviewPageProps) {
           icon={<ArrowUpRight size={17} />}
           iconStyle="coral"
         />
-      </section>
-
-      <section className="detail-metrics-grid" aria-label="Receita e encargos">
-        <InsightCard
+        <MetricCard
+          iconStyle="sage"
           label="Taxa de reembolso"
           value={`${formatPercent(props.totals.refundRate)}%`}
           detail={`${numberFormat.format(props.totals.refunds)} pedidos reembolsados entre as vendas finalizadas`}
           icon={<RotateCcw size={16} />}
         />
-        <InsightCard
+        <MetricCard
+          iconStyle="sage"
           label="Receita reembolsada"
           value={preciseCurrency.format(props.totals.refundedRevenue)}
           detail="Valor dos pedidos reembolsados no período"
           icon={<ArrowDownRight size={16} />}
         />
-        <InsightCard
+        <MetricCard
+          iconStyle="sage"
           label="ARPU"
           value={
             props.totals.arpu === null
@@ -2690,19 +2643,22 @@ function OverviewPage(props: OverviewPageProps) {
           detail="Receita líquida por venda aprovada; aproximação por pedido"
           icon={<UserRound size={16} />}
         />
-        <InsightCard
+        <MetricCard
+          iconStyle="sage"
           label="Chargebacks"
           value={numberFormat.format(props.totals.chargebacks)}
           detail={`${preciseCurrency.format(props.totals.chargebackRevenue)} em valor contestado`}
           icon={<ShoppingBag size={16} />}
         />
-        <InsightCard
+        <MetricCard
+          iconStyle="sage"
           label={`Imposto sobre anúncios · ${formatPercent(AD_TAX_RATE * 100)}%`}
           value={preciseCurrency.format(props.totals.adTax)}
           detail="Estimativa aplicada sobre o investimento em anúncios"
           icon={<Receipt size={16} />}
         />
-        <InsightCard
+        <MetricCard
+          iconStyle="sage"
           label={`Imposto sobre produtos · ${formatPercent(PRODUCT_TAX_RATE * 100)}%`}
           value={preciseCurrency.format(props.totals.productTax)}
           detail="Estimativa aplicada sobre a receita líquida"
@@ -2815,122 +2771,6 @@ function OverviewPage(props: OverviewPageProps) {
             </div>
           </CardContent>
         </Card>
-
-        <Card className="panel attribution-panel">
-          <CardHeader className="panel-header">
-            <div>
-              <div className="panel-kicker">QUALIDADE DOS DADOS</div>
-              <h2>Atribuição de vendas</h2>
-            </div>
-            <Popover
-              label="Como a atribuição é calculada"
-              trigger={<MoreHorizontal size={19} />}
-              triggerClassName="icon-button subtle-icon"
-              panelClassName="attribution-help-menu"
-            >
-              {() => (
-                <div className="attribution-help-copy">
-                  <strong>Como funciona</strong>
-                  <p>
-                    Uma venda é atribuída quando o webhook inclui identificador
-                    de campanha, conjunto ou anúncio. O vínculo pode levar em
-                    conta UTMs e dados da Meta disponíveis no período.
-                  </p>
-                </div>
-              )}
-            </Popover>
-          </CardHeader>
-          <CardContent className="attribution-panel-content">
-            <div className="match-summary">
-              <div
-                className="match-gauge"
-                style={
-                  {
-                    "--match": `${props.totals.matchRate}%`,
-                  } as React.CSSProperties
-                }
-              >
-                <div className="gauge-inner">
-                  <strong>{props.totals.matchRate}%</strong>
-                  <span>atribuídas</span>
-                </div>
-              </div>
-              <div className="match-copy">
-                <strong>Boa leitura de origem</strong>
-                <span>Pedidos vinculados a uma campanha.</span>
-                <div className="match-status">
-                  <BadgeCheck size={14} /> Acompanhamento saudável
-                </div>
-              </div>
-            </div>
-            <Separator className="attribution-divider" />
-            <div className="source-row">
-              <span className="source-icon source-meta">
-                <Activity size={15} />
-              </span>
-              <span className="source-name">Meta Ads</span>
-              <strong>
-                {props.demo
-                  ? "3 contas"
-                  : `${props.accountOptions.length} contas`}
-              </strong>
-              <span className="source-status">
-                <i />{" "}
-                {props.demo
-                  ? "Exemplo"
-                  : props.integrationStatus.meta
-                    ? "Conectado"
-                    : "Pendente"}
-              </span>
-            </div>
-            <div className="source-row">
-              <span className="source-icon source-hotmart">H</span>
-              <span className="source-name">Hotmart</span>
-              <strong>
-                {props.demo
-                  ? "2 produtos"
-                  : props.integrationStatus.hotmart
-                    ? "Configurado"
-                    : "—"}
-              </strong>
-              <span className="source-status">
-                <i />{" "}
-                {props.demo
-                  ? "Exemplo"
-                  : props.integrationStatus.hotmart
-                    ? "Conectado"
-                    : "Pendente"}
-              </span>
-            </div>
-            <div className="source-row">
-              <span className="source-icon source-kiwify">K</span>
-              <span className="source-name">Kiwify</span>
-              <strong>
-                {props.demo
-                  ? "2 produtos"
-                  : props.integrationStatus.kiwify
-                    ? "Configurado"
-                    : "—"}
-              </strong>
-              <span className="source-status">
-                <i />{" "}
-                {props.demo
-                  ? "Exemplo"
-                  : props.integrationStatus.kiwify
-                    ? "Conectado"
-                    : "Pendente"}
-              </span>
-            </div>
-            <button
-              className="panel-link"
-              onClick={() =>
-                window.dispatchEvent(new CustomEvent("navigate-integrations"))
-              }
-            >
-              Ver integrações <ArrowRight size={14} />
-            </button>
-          </CardContent>
-        </Card>
       </div>
 
       <div className="disclaimer">
@@ -2939,31 +2779,6 @@ function OverviewPage(props: OverviewPageProps) {
         aproximação de usuários.
       </div>
     </>
-  )
-}
-
-function InsightCard({
-  label,
-  value,
-  detail,
-  icon,
-}: {
-  label: string
-  value: string
-  detail: string
-  icon: React.ReactNode
-}) {
-  return (
-    <Card className="detail-metric-card">
-      <CardHeader className="detail-metric-header">
-        <CardTitle>{label}</CardTitle>
-        <span className="detail-metric-icon">{icon}</span>
-      </CardHeader>
-      <CardContent className="detail-metric-content">
-        <strong>{value}</strong>
-        <p>{detail}</p>
-      </CardContent>
-    </Card>
   )
 }
 
@@ -4156,11 +3971,15 @@ function SalesPage(props: SalesPageProps) {
 }
 
 function IntegrationsPage({
+  selectedPlatform,
+  onPlatformChange,
   onSync,
   syncing,
   onToast,
   onHelp,
 }: {
+  selectedPlatform: string
+  onPlatformChange: (platform: string) => void
   onSync: () => void
   syncing: boolean
   onToast: (message: string) => void
@@ -4182,10 +4001,6 @@ function IntegrationsPage({
   const [hotmartWebhookToken, setHotmartWebhookToken] = useState("")
   const [kiwifyWebhookToken, setKiwifyWebhookToken] = useState("")
   const [savingWebhookSettings, setSavingWebhookSettings] = useState(false)
-  const [currentPassword, setCurrentPassword] = useState("")
-  const [newPassword, setNewPassword] = useState("")
-  const [confirmNewPassword, setConfirmNewPassword] = useState("")
-  const [savingPassword, setSavingPassword] = useState(false)
   const [connected, setConnected] = useState({
     meta: false,
     hotmart: false,
@@ -4294,12 +4109,15 @@ function IntegrationsPage({
     }
   }
 
-  async function saveWebhookSettings(event: FormEvent<HTMLFormElement>) {
+  async function saveWebhookSettings(
+    event: FormEvent<HTMLFormElement>,
+    provider: "hotmart" | "kiwify"
+  ) {
     event.preventDefault()
     const payload: Record<string, string> = {}
-    if (hotmartWebhookToken.trim())
+    if (provider === "hotmart" && hotmartWebhookToken.trim())
       payload.hotmartToken = hotmartWebhookToken.trim()
-    if (kiwifyWebhookToken.trim())
+    if (provider === "kiwify" && kiwifyWebhookToken.trim())
       payload.kiwifyToken = kiwifyWebhookToken.trim()
     if (!Object.keys(payload).length) {
       onToast("Informe pelo menos um token para salvar.")
@@ -4326,8 +4144,8 @@ function IntegrationsPage({
         hotmart: result.webhooks?.hotmartUrl ?? webhookUrls.hotmart,
         kiwify: result.webhooks?.kiwifyUrl ?? webhookUrls.kiwify,
       })
-      setHotmartWebhookToken("")
-      setKiwifyWebhookToken("")
+      if (provider === "hotmart") setHotmartWebhookToken("")
+      else setKiwifyWebhookToken("")
       onToast("Tokens de webhook salvos com segurança.")
     } catch (error) {
       onToast(
@@ -4340,43 +4158,6 @@ function IntegrationsPage({
     }
   }
 
-  async function changePassword(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    if (newPassword !== confirmNewPassword) {
-      onToast("As novas senhas não coincidem.")
-      return
-    }
-    setSavingPassword(true)
-    try {
-      const response = await fetch("/api/auth/password", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          currentPassword,
-          newPassword,
-          confirmPassword: confirmNewPassword,
-        }),
-      })
-      const result = (await response.json().catch(() => ({}))) as {
-        error?: string
-      }
-      if (!response.ok)
-        throw new Error(result.error || "Não foi possível alterar a senha.")
-      setCurrentPassword("")
-      setNewPassword("")
-      setConfirmNewPassword("")
-      onToast("Senha alterada. Sua sessão atual foi mantida.")
-    } catch (error) {
-      onToast(
-        error instanceof Error
-          ? error.message
-          : "Não foi possível alterar a senha."
-      )
-    } finally {
-      setSavingPassword(false)
-    }
-  }
-
   function generateKiwifyToken() {
     const bytes = crypto.getRandomValues(new Uint8Array(32))
     setKiwifyWebhookToken(
@@ -4385,6 +4166,8 @@ function IntegrationsPage({
   }
 
   async function removeWebhook(provider: "hotmart" | "kiwify") {
+    if (savingWebhookSettings) return
+    setSavingWebhookSettings(true)
     try {
       const response = await fetch(`/api/settings/webhooks/${provider}`, {
         method: "DELETE",
@@ -4398,11 +4181,15 @@ function IntegrationsPage({
         hotmart: result.webhooks?.hotmartUrl ?? null,
         kiwify: result.webhooks?.kiwifyUrl ?? null,
       })
+      if (provider === "hotmart") setHotmartWebhookToken("")
+      else setKiwifyWebhookToken("")
       onToast(
         `Token ${provider === "hotmart" ? "Hotmart" : "Kiwify"} removido.`
       )
     } catch {
       onToast("Não foi possível remover o token do webhook.")
+    } finally {
+      setSavingWebhookSettings(false)
     }
   }
 
@@ -4472,512 +4259,426 @@ function IntegrationsPage({
           <p>Conecte as fontes para reunir investimento e receita.</p>
         </div>
         <div className="heading-actions">
-          <button
-            className="button button-secondary"
-            onClick={onHelp}
-            type="button"
-          >
-            <CircleHelp size={16} /> Central de ajuda
-          </button>
-          <button
-            className="button button-primary"
-            onClick={onSync}
-            disabled={syncing}
-          >
-            <RefreshCw size={16} className={syncing ? "spin" : ""} /> Atualizar
-            anúncios
-          </button>
+          <Button variant="outline" size="lg" onClick={onHelp} type="button">
+            <CircleHelp data-icon="inline-start" /> Central de ajuda
+          </Button>
         </div>
       </div>
-      <div className="integration-overview">
-        <div className="integration-overview-icon">
-          <Zap size={19} />
-        </div>
-        <div>
-          <strong>Seu painel está pronto para receber dados</strong>
-          <span>
-            As integrações podem ser conectadas a várias contas de anúncio e
-            produtos.
-          </span>
-        </div>
-        <div className="integration-progress">
-          <span>
-            {Object.values(connected).filter(Boolean).length} de 3 conectadas
-          </span>
-          <div>
-            <i
-              style={{
-                width: `${(Object.values(connected).filter(Boolean).length / 3) * 100}%`,
-              }}
-            />
-          </div>
-        </div>
-      </div>
-      <section className="panel workspace-config-panel">
-        <div className="setup-heading">
-          <div className="setup-step">1</div>
-          <div>
-            <div className="panel-kicker">CONFIGURAÇÃO DO WORKSPACE</div>
-            <h2>Credenciais e segurança</h2>
-            <p>
-              Salve os dados de acesso das plataformas aqui. Os valores
-              sensíveis ficam criptografados no Cloudflare.
-            </p>
-          </div>
-        </div>
-        <div className="workspace-config-grid">
-          <form
-            className="workspace-config-card"
-            id="meta-settings"
-            onSubmit={saveMetaSettings}
-          >
-            <div className="workspace-config-card-heading">
-              <strong>Aplicativo Meta</strong>
-              <span className={metaConfigured ? "configured" : "pending"}>
-                {metaConfigured ? "Configurado" : "Necessário para OAuth"}
-              </span>
-            </div>
-            <label>
-              App ID
-              <input
-                autoComplete="off"
-                required
-                value={metaAppId}
-                onChange={(event) => setMetaAppId(event.target.value)}
-                placeholder="ID do app no Meta for Developers"
-              />
-            </label>
-            <label>
-              App Secret
-              <input
-                autoComplete="new-password"
-                type="password"
-                required={!metaConfigured}
-                value={metaAppSecret}
-                onChange={(event) => setMetaAppSecret(event.target.value)}
-                placeholder={
-                  metaConfigured
-                    ? "Salvo; preencha para substituir"
-                    : "App Secret"
-                }
-              />
-            </label>
-            <label>
-              Versão da Graph API
-              <input
-                autoComplete="off"
-                pattern="v[0-9]{1,3}\.[0-9]"
-                required
-                value={metaApiVersion}
-                onChange={(event) => setMetaApiVersion(event.target.value)}
-                placeholder="v24.0"
-              />
-            </label>
-            <button
-              className="button button-primary"
-              disabled={savingMetaSettings}
-            >
-              {savingMetaSettings ? "Salvando…" : "Salvar aplicativo Meta"}
-            </button>
-          </form>
-          <form
-            className="workspace-config-card"
-            onSubmit={saveWebhookSettings}
-          >
-            <div className="workspace-config-card-heading">
-              <strong>Tokens dos webhooks</strong>
-              <span
-                className={
-                  webhookUrls.hotmart || webhookUrls.kiwify
-                    ? "configured"
-                    : "pending"
-                }
-              >
-                {webhookUrls.hotmart || webhookUrls.kiwify
-                  ? "Tokens protegidos"
-                  : "Adicione ao menos um token"}
-              </span>
-            </div>
-            <label>
-              Hotmart · HOTTOK
-              <input
-                autoComplete="new-password"
-                type="password"
-                value={hotmartWebhookToken}
-                onChange={(event) => setHotmartWebhookToken(event.target.value)}
-                placeholder={
-                  webhookUrls.hotmart
-                    ? "Salvo; preencha para substituir"
-                    : "Cole o HOTTOK"
-                }
-              />
-            </label>
-            <label>
-              Kiwify · token privado
-              <input
-                autoComplete="new-password"
-                type="password"
-                value={kiwifyWebhookToken}
-                onChange={(event) => setKiwifyWebhookToken(event.target.value)}
-                placeholder={
-                  webhookUrls.kiwify
-                    ? "Salvo; preencha para substituir"
-                    : "Crie um token longo e aleatório"
-                }
-              />
-            </label>
-            <div className="workspace-config-actions">
-              <button
-                type="button"
-                className="button button-secondary"
-                onClick={generateKiwifyToken}
-              >
-                Gerar token seguro para Kiwify
-              </button>
-            </div>
-            <p className="workspace-config-help">
-              Campos vazios mantêm os tokens atuais. Ao trocar um token,
-              atualize a configuração correspondente no gateway.
-            </p>
-            {(webhookUrls.hotmart || webhookUrls.kiwify) && (
-              <div className="workspace-config-actions">
-                {webhookUrls.hotmart && (
-                  <button
-                    type="button"
-                    className="button button-secondary"
-                    onClick={() => void removeWebhook("hotmart")}
-                  >
-                    Remover HOTTOK
-                  </button>
-                )}
-                {webhookUrls.kiwify && (
-                  <button
-                    type="button"
-                    className="button button-secondary"
-                    onClick={() => void removeWebhook("kiwify")}
-                  >
-                    Remover token Kiwify
-                  </button>
-                )}
-              </div>
-            )}
-            <button
-              className="button button-primary"
-              disabled={savingWebhookSettings}
-            >
-              {savingWebhookSettings ? "Salvando…" : "Salvar tokens"}
-            </button>
-          </form>
-          <form
-            className="workspace-config-card"
-            id="account-security"
-            onSubmit={changePassword}
-          >
-            <div className="workspace-config-card-heading">
-              <strong>Conta administrativa</strong>
-              <span className="configured">Protegida</span>
-            </div>
-            <label>
-              Senha atual
-              <input
-                autoComplete="current-password"
-                type="password"
-                minLength={12}
-                maxLength={128}
-                required
-                value={currentPassword}
-                onChange={(event) => setCurrentPassword(event.target.value)}
-              />
-            </label>
-            <label>
-              Nova senha <span>(mínimo de 12 caracteres)</span>
-              <input
-                autoComplete="new-password"
-                type="password"
-                minLength={12}
-                maxLength={128}
-                required
-                value={newPassword}
-                onChange={(event) => setNewPassword(event.target.value)}
-              />
-            </label>
-            <label>
-              Confirmar nova senha
-              <input
-                autoComplete="new-password"
-                type="password"
-                minLength={12}
-                maxLength={128}
-                required
-                value={confirmNewPassword}
-                onChange={(event) => setConfirmNewPassword(event.target.value)}
-              />
-            </label>
-            <button className="button button-primary" disabled={savingPassword}>
-              {savingPassword ? "Alterando…" : "Alterar senha"}
-            </button>
-          </form>
-        </div>
-      </section>
-      <div className="section-title-row">
-        <div>
-          <h2>Fontes de dados</h2>
-          <span>Configure cada plataforma uma única vez.</span>
-        </div>
-        <span className="secure-label">
-          <span /> Conexões protegidas
-        </span>
-      </div>
-      <div className="integration-grid">
-        <IntegrationCard
-          id="meta-integration"
-          provider="Meta Ads"
-          description="Contas de anúncio, campanhas e métricas de entrega."
-          logo="meta"
-          badge="Marketing API"
-          state={connected.meta ? "Conectado" : "Não conectado"}
-          action={connected.meta ? "Reconectar conta" : "Conectar conta"}
-          onAction={() => {
-            if (metaConfigured) {
-              window.location.assign("/auth/meta/start")
-              return
-            }
-            document
-              .getElementById("meta-settings")
-              ?.scrollIntoView({ behavior: "smooth", block: "center" })
-            onToast("Salve o App ID e o App Secret antes de conectar a Meta.")
-          }}
-        />
-        <IntegrationCard
-          provider="Hotmart"
-          description="Vendas, reembolsos e dados de origem dos pedidos."
-          logo="hotmart"
-          badge="Webhook + API"
-          state={connected.hotmart ? "Conectado" : "Não conectado"}
-          action={
-            connected.hotmart ? "Atualizar credenciais" : "Conectar gateway"
-          }
-          onAction={() => setCredentialsProvider("hotmart")}
-        />
-        <IntegrationCard
-          provider="Kiwify"
-          description="Pedidos aprovados, estornos e parâmetros UTM."
-          logo="kiwify"
-          badge="Webhook + API"
-          state={connected.kiwify ? "Conectado" : "Não conectado"}
-          action={
-            connected.kiwify ? "Atualizar credenciais" : "Conectar gateway"
-          }
-          onAction={() => setCredentialsProvider("kiwify")}
-        />
-      </div>
-      <section className="panel setup-panel" id="webhook-setup">
-        <div className="setup-heading">
-          <div className="setup-step">1</div>
-          <div>
-            <div className="panel-kicker">RECEBIMENTO DE VENDAS</div>
-            <h2>Configure os webhooks</h2>
-            <p>
-              Adicione estas URLs nos painéis da Hotmart e da Kiwify para
-              receber eventos de pedidos.
-            </p>
-          </div>
-        </div>
-        <div className="webhook-url-row">
-          <div>
-            <span>HOTMART · WEBHOOK DE VENDAS</span>
-            <code>
-              {webhookUrls.hotmart ?? "Configure o HOTTOK acima para ativar"}
-            </code>
-          </div>
-          <button
-            disabled={!webhookUrls.hotmart}
-            onClick={() => webhookUrls.hotmart && copy(webhookUrls.hotmart)}
-          >
-            {copyText === webhookUrls.hotmart ? (
-              <Check size={15} />
-            ) : (
-              <Link2 size={15} />
-            )}
-            {copyText === webhookUrls.hotmart ? "Copiado" : "Copiar URL"}
-          </button>
-        </div>
-        <div className="webhook-url-row">
-          <div>
-            <span>KIWIFY · WEBHOOK DE VENDAS</span>
-            <code>
-              {webhookUrls.kiwify ?? "Configure um token acima para ativar"}
-            </code>
-          </div>
-          <button
-            disabled={!webhookUrls.kiwify}
-            onClick={() => webhookUrls.kiwify && copy(webhookUrls.kiwify)}
-          >
-            {copyText === webhookUrls.kiwify ? (
-              <Check size={15} />
-            ) : (
-              <Link2 size={15} />
-            )}
-            {copyText === webhookUrls.kiwify ? "Copiado" : "Copiar URL"}
-          </button>
-        </div>
-        <div className="setup-footnote">
-          <BadgeCheck size={15} /> A Hotmart valida o HOTTOK no cabeçalho do
-          evento. A Kiwify valida o token privado incluído na URL.
-        </div>
-      </section>
-      <section className="panel connection-note">
-        <div className="note-icon">
-          <ShieldIcon />
-        </div>
-        <div>
-          <strong>Seus dados permanecem privados</strong>
-          <span>
-            Credenciais são criptografadas antes de serem salvas no D1. Dados de
-            compradores não são armazenados no dashboard.
-          </span>
-        </div>
-        <button
-          onClick={() =>
-            onToast(
-              "A senha e as credenciais são protegidas no Worker; os tokens não são exibidos novamente após salvar."
-            )
-          }
+      <Tabs
+        value={selectedPlatform}
+        onValueChange={(value) => onPlatformChange(String(value))}
+        className="integration-tabs"
+      >
+        <TabsList
+          aria-label="Plataforma de integração"
+          className="integration-tab-list"
         >
-          Como funciona <ExternalLink size={13} />
-        </button>
-      </section>
-      {credentialsProvider && (
-        <div
-          className="modal-scrim"
-          role="presentation"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget)
-              setCredentialsProvider(null)
-          }}
-        >
-          <form className="credentials-modal" onSubmit={submitCredentials}>
-            <div className="modal-heading">
-              <div>
-                <div className="panel-kicker">CONEXÃO SEGURA</div>
-                <h2>
-                  Conectar{" "}
-                  {credentialsProvider === "hotmart" ? "Hotmart" : "Kiwify"}
-                </h2>
+          <TabsTrigger value="meta">Meta Ads</TabsTrigger>
+          <TabsTrigger value="hotmart">Hotmart</TabsTrigger>
+          <TabsTrigger value="kiwify">Kiwify</TabsTrigger>
+        </TabsList>
+        <TabsContent value="meta" id="meta-integration">
+          <div className="integration-section-heading">
+            <h2>Meta Ads</h2>
+            <p>Configure seu aplicativo e conecte as contas de anúncio.</p>
+          </div>
+          <div className="integration-settings-grid">
+            <Card className="settings-panel">
+              <CardHeader>
+                <CardTitle>Aplicativo Meta</CardTitle>
+                <CardDescription>
+                  Dados do aplicativo criado no Meta for Developers.
+                </CardDescription>
+                <CardAction>
+                  <Badge variant="outline">
+                    {metaConfigured ? "Configurado" : "Não configurado"}
+                  </Badge>
+                </CardAction>
+              </CardHeader>
+              <CardContent>
+                <form id="meta-settings" onSubmit={saveMetaSettings}>
+                  <FieldGroup>
+                    <Field data-disabled={savingMetaSettings}>
+                      <FieldLabel htmlFor="meta-app-id">App ID</FieldLabel>
+                      <Input
+                        id="meta-app-id"
+                        autoComplete="off"
+                        required
+                        disabled={savingMetaSettings}
+                        value={metaAppId}
+                        onChange={(event) => setMetaAppId(event.target.value)}
+                        placeholder="ID do aplicativo"
+                      />
+                    </Field>
+                    <Field data-disabled={savingMetaSettings}>
+                      <FieldLabel htmlFor="meta-app-secret">
+                        App Secret
+                      </FieldLabel>
+                      <Input
+                        id="meta-app-secret"
+                        autoComplete="new-password"
+                        type="password"
+                        required={!metaConfigured}
+                        disabled={savingMetaSettings}
+                        value={metaAppSecret}
+                        onChange={(event) =>
+                          setMetaAppSecret(event.target.value)
+                        }
+                        placeholder={
+                          metaConfigured
+                            ? "Salvo; preencha para substituir"
+                            : "Secret do aplicativo"
+                        }
+                      />
+                    </Field>
+                    <Field data-disabled={savingMetaSettings}>
+                      <FieldLabel htmlFor="meta-api-version">
+                        Versão da Graph API
+                      </FieldLabel>
+                      <Input
+                        id="meta-api-version"
+                        autoComplete="off"
+                        pattern="v[0-9]{1,3}\.[0-9]"
+                        required
+                        disabled={savingMetaSettings}
+                        value={metaApiVersion}
+                        onChange={(event) =>
+                          setMetaApiVersion(event.target.value)
+                        }
+                        placeholder="v24.0"
+                      />
+                    </Field>
+                    <div className="settings-actions">
+                      <Button
+                        type="submit"
+                        disabled={savingMetaSettings}
+                        size="lg"
+                      >
+                        {savingMetaSettings ? "Salvando…" : "Salvar aplicativo"}
+                      </Button>
+                    </div>
+                  </FieldGroup>
+                </form>
+              </CardContent>
+            </Card>
+            <Card className="settings-panel">
+              <CardHeader>
+                <CardTitle>Contas de anúncio</CardTitle>
+                <CardDescription>
+                  Autorize o acesso às contas que deseja acompanhar.
+                </CardDescription>
+                <CardAction>
+                  <Badge variant="outline">
+                    {connected.meta ? "Conectado" : "Não conectado"}
+                  </Badge>
+                </CardAction>
+              </CardHeader>
+              <CardContent className="integration-connection-content">
+                <p>
+                  Salve o aplicativo ao lado e entre na Meta para escolher suas
+                  contas. Você pode conectar várias contas de anúncio.
+                </p>
+                <div className="settings-actions">
+                  <Button
+                    type="button"
+                    disabled={!metaConfigured || savingMetaSettings}
+                    onClick={() => window.location.assign("/auth/meta/start")}
+                    size="lg"
+                  >
+                    {connected.meta ? "Reconectar contas" : "Conectar contas"}
+                    <ArrowRight data-icon="inline-end" />
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={!connected.meta || syncing}
+                    onClick={onSync}
+                    size="lg"
+                  >
+                    <RefreshCw
+                      className={syncing ? "spin" : ""}
+                      data-icon="inline-start"
+                    />
+                    {syncing ? "Atualizando…" : "Atualizar anúncios"}
+                  </Button>
+                </div>
+                {!metaConfigured && (
+                  <p>Configure o aplicativo Meta para habilitar a conexão.</p>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
+        {(["hotmart", "kiwify"] as const).map((provider) => {
+          const name = provider === "hotmart" ? "Hotmart" : "Kiwify"
+          const webhookUrl = webhookUrls[provider]
+          const token =
+            provider === "hotmart" ? hotmartWebhookToken : kiwifyWebhookToken
+          return (
+            <TabsContent key={provider} value={provider}>
+              <div className="integration-section-heading">
+                <h2>{name}</h2>
+                <p>
+                  Conecte a API para consultar vendas e o webhook para receber
+                  novos pedidos.
+                </p>
               </div>
-              <button
-                type="button"
-                className="icon-button"
-                aria-label="Fechar"
-                onClick={() => setCredentialsProvider(null)}
-              >
-                <X size={17} />
-              </button>
-            </div>
-            <p>
-              As credenciais serão criptografadas no Worker e usadas somente
-              para consultar suas vendas.
-            </p>
-            <label>
-              Client ID
-              <input
-                autoComplete="off"
-                required
-                value={clientId}
-                onChange={(event) => setClientId(event.target.value)}
-              />
-            </label>
-            <label>
-              Client Secret
-              <input
-                autoComplete="new-password"
-                required
-                type="password"
-                value={clientSecret}
-                onChange={(event) => setClientSecret(event.target.value)}
-              />
-            </label>
-            {credentialsProvider === "kiwify" && (
-              <label>
-                ID da conta Kiwify
-                <input
+              <div className="integration-settings-grid">
+                <Card className="settings-panel">
+                  <CardHeader>
+                    <CardTitle>Consulta de vendas pela API</CardTitle>
+                    <CardDescription>
+                      Recupere pedidos e reconcilie os dados de vendas da {name}
+                      .
+                    </CardDescription>
+                    <CardAction>
+                      <Badge variant="outline">
+                        {connected[provider] ? "Conectado" : "Não conectado"}
+                      </Badge>
+                    </CardAction>
+                  </CardHeader>
+                  <CardContent className="integration-connection-content">
+                    <p>
+                      {provider === "hotmart"
+                        ? "Informe o Client ID e o Client Secret gerados na Hotmart."
+                        : "Informe o Client ID, o Client Secret e o ID da sua conta Kiwify."}
+                    </p>
+                    <div className="settings-actions">
+                      <Button
+                        type="button"
+                        size="lg"
+                        onClick={() => {
+                          setClientId("")
+                          setClientSecret("")
+                          setKiwifyAccountId("")
+                          setCredentialsProvider(provider)
+                        }}
+                      >
+                        {connected[provider]
+                          ? "Atualizar credenciais"
+                          : "Conectar API"}
+                        <ArrowRight data-icon="inline-end" />
+                      </Button>
+                    </div>
+                    <p>
+                      A reconciliação de vendas pode ser iniciada nas abas
+                      Vendas e Funil após conectar a API.
+                    </p>
+                  </CardContent>
+                </Card>
+                <Card className="settings-panel">
+                  <CardHeader>
+                    <CardTitle>Recebimento de pedidos por webhook</CardTitle>
+                    <CardDescription>
+                      Receba vendas, reembolsos e chargebacks enviados pela{" "}
+                      {name}.
+                    </CardDescription>
+                    <CardAction>
+                      <Badge variant="outline">
+                        {webhookUrl ? "Token salvo" : "Não configurado"}
+                      </Badge>
+                    </CardAction>
+                  </CardHeader>
+                  <CardContent>
+                    <form
+                      onSubmit={(event) =>
+                        void saveWebhookSettings(event, provider)
+                      }
+                    >
+                      <FieldGroup>
+                        <Field data-disabled={savingWebhookSettings}>
+                          <FieldLabel htmlFor={`${provider}-webhook-token`}>
+                            {provider === "hotmart"
+                              ? "HOTTOK"
+                              : "Token privado"}
+                          </FieldLabel>
+                          <Input
+                            id={`${provider}-webhook-token`}
+                            autoComplete="new-password"
+                            type="password"
+                            disabled={savingWebhookSettings}
+                            value={token}
+                            onChange={(event) =>
+                              provider === "hotmart"
+                                ? setHotmartWebhookToken(event.target.value)
+                                : setKiwifyWebhookToken(event.target.value)
+                            }
+                            placeholder={
+                              webhookUrl
+                                ? "Salvo; preencha para substituir"
+                                : provider === "hotmart"
+                                  ? "Cole o HOTTOK da Hotmart"
+                                  : "Crie ou gere um token seguro"
+                            }
+                          />
+                          <FieldDescription>
+                            {provider === "hotmart"
+                              ? "Use o HOTTOK disponível nas configurações de webhook da Hotmart."
+                              : "Gere um token e salve para criar a URL do webhook."}
+                          </FieldDescription>
+                        </Field>
+                        <div className="settings-actions">
+                          <Button
+                            type="submit"
+                            disabled={savingWebhookSettings || !token.trim()}
+                            size="lg"
+                          >
+                            {savingWebhookSettings
+                              ? "Salvando…"
+                              : "Salvar token"}
+                          </Button>
+                          {provider === "kiwify" && (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              disabled={savingWebhookSettings}
+                              onClick={generateKiwifyToken}
+                            >
+                              Gerar token seguro
+                            </Button>
+                          )}
+                        </div>
+                        <Field>
+                          <FieldLabel htmlFor={`${provider}-webhook-url`}>
+                            URL do webhook
+                          </FieldLabel>
+                          <Input
+                            id={`${provider}-webhook-url`}
+                            readOnly
+                            value={webhookUrl ?? ""}
+                            placeholder="Salve o token para obter a URL"
+                          />
+                          <FieldDescription>
+                            Copie esta URL e cadastre no painel da {name}. Ao
+                            substituir o token, atualize também a configuração
+                            do gateway.
+                          </FieldDescription>
+                          <div className="settings-actions">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              disabled={!webhookUrl}
+                              onClick={() =>
+                                webhookUrl && void copy(webhookUrl)
+                              }
+                            >
+                              {copyText === webhookUrl ? (
+                                <Check data-icon="inline-start" />
+                              ) : (
+                                <Copy data-icon="inline-start" />
+                              )}
+                              {copyText === webhookUrl
+                                ? "Copiado"
+                                : "Copiar URL"}
+                            </Button>
+                            {webhookUrl && (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                disabled={savingWebhookSettings}
+                                onClick={() => void removeWebhook(provider)}
+                              >
+                                Remover token
+                              </Button>
+                            )}
+                          </div>
+                        </Field>
+                      </FieldGroup>
+                    </form>
+                  </CardContent>
+                </Card>
+              </div>
+            </TabsContent>
+          )
+        })}
+      </Tabs>
+      <Alert className="integration-privacy-note">
+        <AlertTitle>Credenciais protegidas</AlertTitle>
+        <AlertDescription>
+          Os segredos ficam protegidos e não são exibidos novamente após salvar.
+        </AlertDescription>
+      </Alert>
+      <Dialog
+        open={Boolean(credentialsProvider)}
+        onOpenChange={(open) => {
+          if (!open && !savingCredentials) setCredentialsProvider(null)
+        }}
+      >
+        <DialogContent
+          className="gateway-credentials-dialog"
+          showCloseButton={!savingCredentials}
+        >
+          <DialogHeader>
+            <DialogTitle>
+              Conectar API da{" "}
+              {credentialsProvider === "hotmart" ? "Hotmart" : "Kiwify"}
+            </DialogTitle>
+            <DialogDescription>
+              Informe as credenciais geradas no painel da plataforma para
+              consultar suas vendas.
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={submitCredentials}>
+            <FieldGroup>
+              <Field data-disabled={savingCredentials}>
+                <FieldLabel htmlFor="gateway-client-id">Client ID</FieldLabel>
+                <Input
+                  id="gateway-client-id"
                   autoComplete="off"
                   required
-                  value={kiwifyAccountId}
-                  onChange={(event) => setKiwifyAccountId(event.target.value)}
+                  disabled={savingCredentials}
+                  value={clientId}
+                  onChange={(event) => setClientId(event.target.value)}
                 />
-              </label>
-            )}
-            <div className="modal-actions">
-              <button
-                type="button"
-                className="button button-secondary"
-                onClick={() => setCredentialsProvider(null)}
-              >
-                Cancelar
-              </button>
-              <button
-                className="button button-primary"
-                disabled={savingCredentials}
-              >
-                {savingCredentials ? "Validando…" : "Validar e conectar"}
-              </button>
-            </div>
+              </Field>
+              <Field data-disabled={savingCredentials}>
+                <FieldLabel htmlFor="gateway-client-secret">
+                  Client Secret
+                </FieldLabel>
+                <Input
+                  id="gateway-client-secret"
+                  autoComplete="new-password"
+                  required
+                  type="password"
+                  disabled={savingCredentials}
+                  value={clientSecret}
+                  onChange={(event) => setClientSecret(event.target.value)}
+                />
+              </Field>
+              {credentialsProvider === "kiwify" && (
+                <Field data-disabled={savingCredentials}>
+                  <FieldLabel htmlFor="gateway-account-id">
+                    ID da conta Kiwify
+                  </FieldLabel>
+                  <Input
+                    id="gateway-account-id"
+                    autoComplete="off"
+                    required
+                    disabled={savingCredentials}
+                    value={kiwifyAccountId}
+                    onChange={(event) => setKiwifyAccountId(event.target.value)}
+                  />
+                </Field>
+              )}
+              <div className="settings-actions">
+                <Button type="submit" disabled={savingCredentials} size="lg">
+                  {savingCredentials ? "Validando…" : "Validar e conectar"}
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={savingCredentials}
+                  onClick={() => setCredentialsProvider(null)}
+                >
+                  Cancelar
+                </Button>
+              </div>
+            </FieldGroup>
           </form>
-        </div>
-      )}
+        </DialogContent>
+      </Dialog>
     </>
   )
-}
-
-function IntegrationCard({
-  id,
-  provider,
-  description,
-  logo,
-  badge,
-  state,
-  action,
-  onAction,
-}: {
-  id?: string
-  provider: string
-  description: string
-  logo: string
-  badge: string
-  state: string
-  action: string
-  onAction: () => void
-}) {
-  return (
-    <article className="integration-card" id={id}>
-      <div className="integration-card-top">
-        <ProviderLogo name={logo} />
-        <span className="integration-badge">{badge}</span>
-      </div>
-      <h3>{provider}</h3>
-      <p>{description}</p>
-      <div className="integration-card-state">
-        <span /> {state}
-      </div>
-      <button onClick={onAction}>
-        {action}
-        <ArrowRight size={15} />
-      </button>
-    </article>
-  )
-}
-
-function ProviderLogo({ name }: { name: string }) {
-  if (name === "meta")
-    return (
-      <div className="provider-logo meta-logo">
-        <Activity size={24} strokeWidth={2.3} />
-      </div>
-    )
-  if (name === "hotmart")
-    return <div className="provider-logo hotmart-logo">H</div>
-  return <div className="provider-logo kiwify-logo">K</div>
 }
 
 function GatewayBadge({ gateway }: { gateway: Sale["gateway"] }) {
@@ -5007,14 +4708,6 @@ function SaleStatus({ status }: { status: Sale["status"] }) {
       <i />
       {status}
     </Badge>
-  )
-}
-
-function ShieldIcon() {
-  return (
-    <span className="shield-shape">
-      <BadgeCheck size={18} />
-    </span>
   )
 }
 
@@ -5065,7 +4758,7 @@ function SetupPage({ onAccountCreated }: { onAccountCreated: () => void }) {
             <Activity size={18} strokeWidth={2.6} />
           </span>
           <span>
-            pulso<span className="brand-period">.</span>
+            selfmetric<span className="brand-period">.</span>
           </span>
         </div>
         <div className="panel-kicker">CONFIGURAÇÃO INICIAL</div>
@@ -5155,7 +4848,7 @@ function LoginPage({ onLoggedIn }: { onLoggedIn: () => void }) {
             <Activity size={18} strokeWidth={2.6} />
           </span>
           <span>
-            pulso<span className="brand-period">.</span>
+            selfmetric<span className="brand-period">.</span>
           </span>
         </div>
         <div className="panel-kicker">WORKSPACE PRIVADO</div>
@@ -5249,14 +4942,6 @@ function formatActivityDate(value: string) {
     dateStyle: "short",
     timeStyle: "short",
   }).format(date)
-}
-
-function pageTitle(page: Page) {
-  if (page === "campaigns") return "Campanhas"
-  if (page === "funnel") return "Funil"
-  if (page === "sales") return "Vendas"
-  if (page === "integrations") return "Integrações"
-  return "Visão geral"
 }
 
 function readToastFromUrl() {

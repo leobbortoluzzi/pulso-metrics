@@ -10,6 +10,8 @@ import {
   MAX_DATE_RANGE_DAYS,
 } from "../src/lib/date-range"
 import { readMetaConfiguration } from "./settings"
+import { checkpointSync, resumeSync } from "./sync-progress"
+import { repairSaleAttributionPage } from "./attribution"
 
 type JsonRecord = Record<string, unknown>
 
@@ -313,10 +315,46 @@ function actionCount(actions: Insight["actions"], actionTypes: string[]) {
   return null
 }
 
+type MetaCursor =
+  | { phase: "insights"; query: string | null }
+  | { phase: "attribution"; afterId: number }
+
 export async function consumeMetaSync(
   env: Env,
   message: Extract<QueueMessage, { type: "meta_sync" }>
 ) {
+  const progress = await resumeSync<MetaCursor>(
+    env,
+    message,
+    message.accountId,
+    {
+      phase: "insights",
+      query: null,
+    }
+  )
+  if (!progress) {
+    await updateSyncRunStatus(env, message.syncId)
+    return
+  }
+  if (progress.cursor.phase === "attribution") {
+    const afterId = await repairSaleAttributionPage(
+      env.DB,
+      message.accountId,
+      progress.cursor.afterId
+    )
+    const next: MetaCursor | null =
+      afterId === null ? null : { phase: "attribution", afterId }
+    await checkpointSync(
+      env,
+      message,
+      message.accountId,
+      progress.version,
+      next,
+      0
+    )
+    if (!next) await updateSyncRunStatus(env, message.syncId)
+    return
+  }
   const integration = await env.DB.prepare(
     "SELECT access_token_ciphertext FROM integrations WHERE provider = 'meta'"
   ).first<{ access_token_ciphertext: string | null }>()
@@ -358,113 +396,116 @@ export async function consumeMetaSync(
     "fields",
     "account_id,date_start,campaign_id,campaign_name,adset_id,adset_name,ad_id,ad_name,spend,impressions,clicks,inline_link_clicks,actions,ctr,cpc,cpm"
   )
-  url.searchParams.set("limit", "500")
+  url.searchParams.set("limit", "5")
+  if (progress.cursor.phase === "insights" && progress.cursor.query) {
+    url.search = progress.cursor.query
+  }
   url.searchParams.set("access_token", accessToken)
 
-  let rowsWritten = 0
   const missingFxDates = new Set<string>()
-  for (let page = 0; page < 100; page += 1) {
-    const result = await graphJson(url)
-    const insights = Array.isArray(result.data)
-      ? (result.data as Insight[])
-      : []
-    for (let start = 0; start < insights.length; start += 55) {
-      const chunk = insights.slice(start, start + 55)
-      const statements = await Promise.all(
-        chunk
-          .filter((item) => item.date_start && item.campaign_id)
-          .map(async (item) => {
-            const spend = Number(item.spend ?? 0)
-            const linkClicks =
-              metricCount(item.inline_link_clicks) ??
-              actionCount(item.actions, ["link_click"]) ??
-              Number(item.clicks ?? 0)
-            const landingPageViews = actionCount(item.actions, [
-              "landing_page_view",
-              "onsite_conversion.landing_page_view",
-              "omni_landing_page_view",
-            ])
-            const checkouts = actionCount(item.actions, [
-              "offsite_conversion.fb_pixel_initiate_checkout",
-              "offsite_conversion.initiate_checkout",
-              "onsite_conversion.initiate_checkout",
-              "initiate_checkout",
-              "fb_mobile_initiated_checkout",
-              "omni_initiated_checkout",
-            ])
-            const fx =
-              account.currency === "BRL"
-                ? { selling_rate: 1 }
-                : await env.DB.prepare(
-                    "SELECT selling_rate FROM fx_rates WHERE currency = ? AND date <= ? ORDER BY date DESC LIMIT 1"
-                  )
-                    .bind(account.currency, item.date_start)
-                    .first<{ selling_rate: number }>()
-            if (!fx && item.date_start) missingFxDates.add(item.date_start)
-            return env.DB.prepare(
-              `INSERT INTO ad_metrics (
-        account_id, date, campaign_id, campaign_name, adset_id, adset_name, ad_id, ad_name,
-        spend, spend_brl, impressions, clicks, ctr, cpc, cpm, link_clicks,
-        landing_page_views, checkouts, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-      ON CONFLICT(account_id, date, campaign_id, adset_id, ad_id) DO UPDATE SET
-        campaign_name = excluded.campaign_name, adset_name = excluded.adset_name, ad_name = excluded.ad_name,
-        spend = excluded.spend, spend_brl = excluded.spend_brl, impressions = excluded.impressions, clicks = excluded.clicks,
-        ctr = excluded.ctr, cpc = excluded.cpc, cpm = excluded.cpm,
-        link_clicks = excluded.link_clicks,
-        landing_page_views = excluded.landing_page_views,
-        checkouts = excluded.checkouts,
-        updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`
-            ).bind(
-              message.accountId,
-              item.date_start,
-              item.campaign_id,
-              item.campaign_name ?? item.campaign_id,
-              item.adset_id ?? "",
-              item.adset_name ?? "",
-              item.ad_id ?? "",
-              item.ad_name ?? "",
-              spend,
-              fx ? spend * fx.selling_rate : null,
-              Number(item.impressions ?? 0),
-              Number(item.clicks ?? 0),
-              Number(item.ctr ?? 0),
-              Number(item.cpc ?? 0),
-              Number(item.cpm ?? 0),
-              linkClicks,
-              landingPageViews,
-              checkouts
-            )
-          })
-      )
-      if (statements.length) await env.DB.batch(statements)
-      rowsWritten += statements.length
-    }
-    const next = asText(asRecord(result.paging).next)
-    if (!next) {
-      await Promise.all(
-        [...missingFxDates].map((date) =>
-          env.SYNC_QUEUE.send({
-            type: "fx_rate",
-            currency: account.currency,
-            date,
-          } satisfies QueueMessage)
+  const result = await graphJson(url)
+  if (!Array.isArray(result.data))
+    throw new Error("A Meta retornou uma lista de métricas inválida.")
+  const insights = result.data as Insight[]
+  if (insights.length > 5)
+    throw new Error("A Meta não respeitou o tamanho da página solicitado.")
+  const statements = await Promise.all(
+    insights
+      .filter((item) => item.date_start && item.campaign_id)
+      .map(async (item) => {
+        const spend = Number(item.spend ?? 0)
+        const linkClicks =
+          metricCount(item.inline_link_clicks) ??
+          actionCount(item.actions, ["link_click"]) ??
+          Number(item.clicks ?? 0)
+        const landingPageViews = actionCount(item.actions, [
+          "landing_page_view",
+          "onsite_conversion.landing_page_view",
+          "omni_landing_page_view",
+        ])
+        const checkouts = actionCount(item.actions, [
+          "offsite_conversion.fb_pixel_initiate_checkout",
+          "offsite_conversion.initiate_checkout",
+          "onsite_conversion.initiate_checkout",
+          "initiate_checkout",
+          "fb_mobile_initiated_checkout",
+          "omni_initiated_checkout",
+        ])
+        const fx =
+          account.currency === "BRL"
+            ? { selling_rate: 1 }
+            : await env.DB.prepare(
+                "SELECT selling_rate FROM fx_rates WHERE currency = ? AND date <= ? ORDER BY date DESC LIMIT 1"
+              )
+                .bind(account.currency, item.date_start)
+                .first<{ selling_rate: number }>()
+        if (!fx && item.date_start) missingFxDates.add(item.date_start)
+        return env.DB.prepare(
+          `INSERT INTO ad_metrics (
+    account_id, date, campaign_id, campaign_name, adset_id, adset_name, ad_id, ad_name,
+    spend, spend_brl, impressions, clicks, ctr, cpc, cpm, link_clicks,
+    landing_page_views, checkouts, updated_at
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+  ON CONFLICT(account_id, date, campaign_id, adset_id, ad_id) DO UPDATE SET
+    campaign_name = excluded.campaign_name, adset_name = excluded.adset_name, ad_name = excluded.ad_name,
+    spend = excluded.spend, spend_brl = excluded.spend_brl, impressions = excluded.impressions, clicks = excluded.clicks,
+    ctr = excluded.ctr, cpc = excluded.cpc, cpm = excluded.cpm,
+    link_clicks = excluded.link_clicks,
+    landing_page_views = excluded.landing_page_views,
+    checkouts = excluded.checkouts,
+    updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`
+        ).bind(
+          message.accountId,
+          item.date_start,
+          item.campaign_id,
+          item.campaign_name ?? item.campaign_id,
+          item.adset_id ?? "",
+          item.adset_name ?? "",
+          item.ad_id ?? "",
+          item.ad_name ?? "",
+          spend,
+          fx ? spend * fx.selling_rate : null,
+          Number(item.impressions ?? 0),
+          Number(item.clicks ?? 0),
+          Number(item.ctr ?? 0),
+          Number(item.cpc ?? 0),
+          Number(item.cpm ?? 0),
+          linkClicks,
+          landingPageViews,
+          checkouts
         )
-      )
-      await env.DB.prepare(
-        "UPDATE sync_run_accounts SET status = 'completed', rows_written = ?, completed_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE sync_id = ? AND account_id = ?"
-      )
-        .bind(rowsWritten, message.syncId, message.accountId)
-        .run()
-      await updateSyncRunStatus(env, message.syncId)
-      return
-    }
-    const nextUrl = new URL(next)
-    if (nextUrl.hostname !== "graph.facebook.com")
-      throw new Error("Resposta de paginação inválida da Meta.")
-    url.search = nextUrl.search
+      })
+  )
+  if (statements.length) await env.DB.batch(statements)
+  for (const date of missingFxDates) {
+    await env.SYNC_QUEUE.send({
+      type: "fx_rate",
+      currency: account.currency,
+      date,
+    })
   }
-  throw new Error("A sincronização excedeu o limite de páginas da Meta.")
+  const next = asText(asRecord(result.paging).next)
+  let cursor: MetaCursor = { phase: "attribution", afterId: 0 }
+  if (next) {
+    const nextUrl = new URL(next)
+    if (
+      nextUrl.hostname !== "graph.facebook.com" ||
+      nextUrl.protocol !== "https:"
+    )
+      throw new Error("Resposta de paginação inválida da Meta.")
+    nextUrl.searchParams.delete("access_token")
+    if (nextUrl.search === progress.cursor.query)
+      throw new Error("A Meta repetiu o cursor de paginação.")
+    cursor = { phase: "insights", query: nextUrl.search }
+  }
+  await checkpointSync(
+    env,
+    message,
+    message.accountId,
+    progress.version,
+    cursor,
+    statements.length
+  )
 }
 
 export async function markMetaSyncFailed(

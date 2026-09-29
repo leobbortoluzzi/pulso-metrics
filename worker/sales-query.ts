@@ -119,7 +119,7 @@ export async function querySales(
   const refundedCount = summary?.refunded_count ?? 0
   const chargebackCount = summary?.chargeback_count ?? 0
   const approvedAmountCount = summary?.approved_amount_count ?? 0
-  const netRevenue = approvedRevenue - refundedRevenue - chargebackRevenue
+  const netRevenue = approvedRevenue
   const settledCount = approvedCount + refundedCount + chargebackCount
   return {
     sales: sales.results,

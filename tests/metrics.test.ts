@@ -121,8 +121,8 @@ describe("sales summary formulas", () => {
       approvedRevenue: 200,
       refundedRevenue: 50,
       chargebackRevenue: 25,
-      netRevenue: 125,
-      arpu: 125,
+      netRevenue: 200,
+      arpu: 200,
     })
     expect(summarizeSales(rows).refundRate).toBeCloseTo(100 / 3)
   })

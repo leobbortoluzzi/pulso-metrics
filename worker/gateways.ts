@@ -1,6 +1,7 @@
 import { encryptSecret, decryptSecret } from "./secure-store"
 import { ingestSale } from "./webhooks"
 import type { QueueMessage } from "./messages"
+import { checkpointSync, resumeSync } from "./sync-progress"
 
 type Provider = "hotmart" | "kiwify"
 type Credentials = {
@@ -139,10 +140,63 @@ export async function removeGatewayCredentials(env: Env, provider: Provider) {
     .run()
 }
 
+const GATEWAY_PAGE_SIZE = 5
+const HOTMART_STATUSES = [
+  "APPROVED",
+  "COMPLETE",
+  "REFUNDED",
+  "PARTIALLY_REFUNDED",
+  "CHARGEBACK",
+]
+const KIWIFY_STATUSES = [
+  "paid",
+  "approved",
+  "chargedback",
+  "refunded",
+  "pending_refund",
+  "refund_requested",
+  "pending",
+  "waiting_payment",
+]
+type GatewayCursor = {
+  range: number
+  status: number
+  page: number
+  pageToken: string
+}
+
+export function normalizeKiwifyApiSale(value: unknown) {
+  const item = asRecord(value)
+  const product = asRecord(item.product)
+  return {
+    ...item,
+    order_id: item.id,
+    order_status: item.status,
+    amount_minor: Math.round(asNumber(item.net_amount)),
+    product_id: product.id,
+    product_name: product.name,
+    tracking: item.tracking,
+    // Keep the purchase date and the snapshot's update date as separate fields.
+    created_at: item.created_at,
+    updated_at: item.updated_at,
+  }
+}
+
 export async function consumeGatewaySync(
   env: Env,
   message: Extract<QueueMessage, { type: "gateway_sync" }>
 ) {
+  const syncKey = `gateway:${message.provider}`
+  const progress = await resumeSync<GatewayCursor>(env, message, syncKey, {
+    range: 0,
+    status: 0,
+    page: 1,
+    pageToken: "",
+  })
+  if (!progress) {
+    await updateGatewayRunStatus(env, message.syncId)
+    return
+  }
   const integration = await env.DB.prepare(
     "SELECT credentials_ciphertext FROM integrations WHERE provider = ?"
   )
@@ -161,155 +215,99 @@ export async function consumeGatewaySync(
   )
     .bind(message.syncId)
     .run()
-  const syncKey = `gateway:${message.provider}`
   await env.DB.prepare(
-    "UPDATE sync_run_accounts SET status = 'running', started_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE sync_id = ? AND account_id = ?"
+    "UPDATE sync_run_accounts SET status = 'running', error_message = NULL, started_at = COALESCE(started_at, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')) WHERE sync_id = ? AND account_id = ?"
   )
     .bind(message.syncId, syncKey)
     .run()
 
-  const pendingFx = new Set<string>()
-  const imported =
+  const ranges =
+    message.provider === "kiwify"
+      ? splitDateRange(message.from, message.to, KIWIFY_MAX_RANGE_DAYS)
+      : [{ from: message.from, to: message.to }]
+  const statuses =
+    message.provider === "kiwify" ? KIWIFY_STATUSES : HOTMART_STATUSES
+  const cursor = progress.cursor
+  const range = ranges[cursor.range]
+  if (!range || !statuses[cursor.status])
+    throw new Error("Cursor de sincronização inválido.")
+  const url = new URL(
     message.provider === "hotmart"
-      ? await reconcileHotmart(env, token, message, pendingFx)
-      : await reconcileKiwify(env, token, credentials, message, pendingFx)
-  await Promise.all(
-    [...pendingFx].map((key) => {
-      const [currency, date] = key.split("|")
-      return env.SYNC_QUEUE.send({
-        type: "fx_rate",
-        currency,
-        date,
-      } satisfies QueueMessage)
-    })
+      ? "https://developers.hotmart.com/payments/api/v1/sales/history"
+      : "https://public-api.kiwify.com/v1/sales"
   )
-  await env.DB.prepare(
-    "UPDATE sync_run_accounts SET status = 'completed', rows_written = ?, completed_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE sync_id = ? AND account_id = ?"
-  )
-    .bind(imported, message.syncId, syncKey)
-    .run()
-  await updateGatewayRunStatus(env, message.syncId)
-}
-
-async function reconcileHotmart(
-  env: Env,
-  token: string,
-  message: Extract<QueueMessage, { type: "gateway_sync" }>,
-  pendingFx: Set<string>
-) {
-  const statuses = [
-    "APPROVED",
-    "COMPLETE",
-    "REFUNDED",
-    "PARTIALLY_REFUNDED",
-    "CHARGEBACK",
-  ]
-  const startDate = new Date(`${message.from}T00:00:00.000Z`).getTime()
-  const endDate = new Date(`${message.to}T23:59:59.999Z`).getTime()
-  let imported = 0
-  for (const status of statuses) {
-    let pageToken = ""
-    for (let page = 0; page < 100; page += 1) {
-      const url = new URL(
-        "https://developers.hotmart.com/payments/api/v1/sales/history"
-      )
-      url.searchParams.set("start_date", String(startDate))
-      url.searchParams.set("end_date", String(endDate))
-      url.searchParams.set("transaction_status", status)
-      url.searchParams.set("max_results", "100")
-      if (pageToken) url.searchParams.set("page_token", pageToken)
-      const response = await fetch(url, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          Accept: "application/json",
-        },
-      })
-      const body = await readJson(response)
-      const items = Array.isArray(body.items) ? body.items : []
-      for (const item of items) {
-        const result = await ingestSale(env, "hotmart", item, false)
-        if (result.needsFx) pendingFx.add(`${result.currency}|${result.date}`)
-        imported += 1
-      }
-      pageToken = asText(asRecord(body.page_info).next_page_token)
-      if (!pageToken) break
-      if (page === 99)
-        throw new Error("A busca Hotmart excedeu 100 páginas para um status.")
-    }
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${token}`,
+    Accept: "application/json",
   }
-  return imported
-}
-
-async function reconcileKiwify(
-  env: Env,
-  token: string,
-  credentials: Credentials,
-  message: Extract<QueueMessage, { type: "gateway_sync" }>,
-  pendingFx: Set<string>
-) {
-  const statuses = [
-    "paid",
-    "approved",
-    "chargedback",
-    "refunded",
-    "pending_refund",
-    "refund_requested",
-    "pending",
-    "waiting_payment",
-  ]
-  let imported = 0
-  const dateRanges = splitDateRange(
-    message.from,
-    message.to,
-    KIWIFY_MAX_RANGE_DAYS
-  )
-  for (const dateRange of dateRanges) {
-    for (const status of statuses) {
-      for (let page = 1; page <= 100; page += 1) {
-        const url = new URL("https://public-api.kiwify.com/v1/sales")
-        url.searchParams.set("start_date", `${dateRange.from}T00:00:00.000Z`)
-        url.searchParams.set("end_date", `${dateRange.to}T23:59:59.999Z`)
-        url.searchParams.set("status", status)
-        url.searchParams.set("view_full_sale_details", "true")
-        url.searchParams.set("page_size", "100")
-        url.searchParams.set("page_number", String(page))
-        const response = await fetch(url, {
-          headers: {
-            Authorization: `Bearer ${token}`,
-            "x-kiwify-account-id": credentials.accountId ?? "",
-            Accept: "application/json",
-          },
-        })
-        const body = await readJson(response)
-        const items = Array.isArray(body.data) ? body.data : []
-        for (const value of items) {
-          const item = asRecord(value)
-          const product = asRecord(item.product)
-          const normalized = {
-            ...item,
-            order_id: item.id,
-            order_status: item.status,
-            amount_minor: Math.round(asNumber(item.net_amount)),
-            product_id: product.id,
-            product_name: product.name,
-            tracking: item.tracking,
-            created_at: item.updated_at ?? item.created_at,
-          }
-          const result = await ingestSale(env, "kiwify", normalized, false)
-          if (result.needsFx) pendingFx.add(`${result.currency}|${result.date}`)
-          imported += 1
-        }
-        const pagination = asRecord(body.pagination)
-        const current = Number(pagination.page_number ?? page)
-        const pageSize = Number(pagination.page_size ?? 100)
-        const count = Number(pagination.count ?? items.length)
-        if (items.length < pageSize || current * pageSize >= count) break
-        if (page === 100)
-          throw new Error("A busca Kiwify excedeu 100 páginas para um status.")
-      }
-    }
+  if (message.provider === "hotmart") {
+    url.searchParams.set(
+      "start_date",
+      String(Date.parse(`${range.from}T00:00:00.000Z`))
+    )
+    url.searchParams.set(
+      "end_date",
+      String(Date.parse(`${range.to}T23:59:59.999Z`))
+    )
+    url.searchParams.set("transaction_status", statuses[cursor.status])
+    url.searchParams.set("max_results", String(GATEWAY_PAGE_SIZE))
+    if (cursor.pageToken) url.searchParams.set("page_token", cursor.pageToken)
+  } else {
+    headers["x-kiwify-account-id"] = credentials.accountId ?? ""
+    url.searchParams.set("start_date", `${range.from}T00:00:00.000Z`)
+    url.searchParams.set("end_date", `${range.to}T23:59:59.999Z`)
+    url.searchParams.set("status", statuses[cursor.status])
+    url.searchParams.set("view_full_sale_details", "true")
+    url.searchParams.set("page_size", String(GATEWAY_PAGE_SIZE))
+    url.searchParams.set("page_number", String(cursor.page))
   }
-  return imported
+  const body = await readJson(await fetch(url, { headers }))
+  const collection = message.provider === "hotmart" ? body.items : body.data
+  if (!Array.isArray(collection))
+    throw new Error("O gateway retornou uma lista de vendas inválida.")
+  if (collection.length > GATEWAY_PAGE_SIZE)
+    throw new Error("O gateway não respeitou o tamanho da página solicitado.")
+  const pendingFx = new Set<string>()
+  for (const item of collection) {
+    const sale =
+      message.provider === "kiwify" ? normalizeKiwifyApiSale(item) : item
+    const result = await ingestSale(env, message.provider, sale, false)
+    if (result.needsFx) pendingFx.add(`${result.currency}|${result.date}`)
+  }
+  // Dispatch FX work before committing the page: a failed send retries this page.
+  for (const key of pendingFx) {
+    const [currency, date] = key.split("|")
+    await env.SYNC_QUEUE.send({ type: "fx_rate", currency, date })
+  }
+  let next: GatewayCursor | null
+  if (message.provider === "hotmart") {
+    const pageToken = asText(asRecord(body.page_info).next_page_token)
+    if (pageToken && pageToken === cursor.pageToken)
+      throw new Error("A Hotmart repetiu o cursor de paginação.")
+    next = pageToken ? { ...cursor, pageToken, page: cursor.page + 1 } : null
+  } else {
+    const pagination = asRecord(body.pagination)
+    const pageSize = Number(pagination.page_size ?? GATEWAY_PAGE_SIZE)
+    const count = Number(pagination.count ?? collection.length)
+    next =
+      collection.length >= pageSize && cursor.page * pageSize < count
+        ? { ...cursor, page: cursor.page + 1 }
+        : null
+  }
+  if (!next && cursor.status + 1 < statuses.length) {
+    next = { ...cursor, status: cursor.status + 1, page: 1, pageToken: "" }
+  } else if (!next && cursor.range + 1 < ranges.length) {
+    next = { range: cursor.range + 1, status: 0, page: 1, pageToken: "" }
+  }
+  await checkpointSync(
+    env,
+    message,
+    syncKey,
+    progress.version,
+    next,
+    collection.length
+  )
+  if (!next) await updateGatewayRunStatus(env, message.syncId)
 }
 
 export async function markGatewaySyncFailed(

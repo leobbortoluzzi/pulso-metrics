@@ -2,7 +2,7 @@
 
 ## Project Structure
 
-Pulso Metrics is a React 19, TypeScript, and Vite dashboard deployed as a Cloudflare Worker. The dashboard entry points are `src/main.tsx` and `src/App.tsx`; shared calculations and data helpers live in `src/lib/`. Dashboard-specific components are in `src/components/dashboard/`, with reusable UI components in `src/components/ui/`. The Hono API, Meta integration, gateway webhooks, and sync queue processing are in `worker/`. D1 schema migrations belong in `migrations/`, and Vitest cases are in `tests/`. Place imported assets in `src/assets/` and static files in `public/`.
+Selfmetric is a React 19, TypeScript, and Vite dashboard deployed as a Cloudflare Worker. The dashboard entry points are `src/main.tsx` and `src/App.tsx`; shared calculations and data helpers live in `src/lib/`. Dashboard-specific components are in `src/components/dashboard/`, with reusable UI components in `src/components/ui/`. The Hono API, Meta integration, gateway webhooks, and sync queue processing are in `worker/`. D1 schema migrations belong in `migrations/`, and Vitest cases are in `tests/`. Place imported assets in `src/assets/` and static files in `public/`.
 
 ## Development and Deployment
 

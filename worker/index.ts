@@ -968,8 +968,7 @@ async function loadAttributedSales(
   const result = await db
     .prepare(
       `SELECT ${keys},
-        SUM(CASE WHEN status = 'approved' THEN amount_brl ELSE 0 END)
-          - SUM(CASE WHEN status IN ('refunded', 'chargeback') THEN amount_brl ELSE 0 END) AS revenue,
+        SUM(CASE WHEN status = 'approved' THEN amount_brl ELSE 0 END) AS revenue,
         SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) AS orders,
         SUM(CASE WHEN status = 'refunded' THEN amount_brl ELSE 0 END) AS refunded_revenue,
         SUM(CASE WHEN status = 'refunded' THEN 1 ELSE 0 END) AS refunded_orders,
@@ -1034,7 +1033,7 @@ async function loadSalesSummary(
   const chargebackOrders = result?.chargeback_orders ?? 0
   const settledOrders = approvedOrders + refundedOrders + chargebackOrders
   const approvedAmountCount = result?.approved_amount_count ?? 0
-  const netRevenue = approvedRevenue - refundedRevenue - chargebackRevenue
+  const netRevenue = approvedRevenue
   return {
     approvedRevenue,
     refundedRevenue,
@@ -1087,8 +1086,7 @@ async function loadDailyData(
   const revenueResult = await db
     .prepare(
       `SELECT attribution_date AS date,
-        SUM(CASE WHEN status = 'approved' THEN amount_brl ELSE 0 END)
-          - SUM(CASE WHEN status IN ('refunded', 'chargeback') THEN amount_brl ELSE 0 END) AS revenue
+        SUM(CASE WHEN status = 'approved' THEN amount_brl ELSE 0 END) AS revenue
     FROM sales WHERE ${salesClauses.join(" AND ")} GROUP BY attribution_date`
     )
     .bind(...salesValues)
@@ -1193,6 +1191,7 @@ export default {
   async queue(batch: MessageBatch<QueueMessage>, env: Env) {
     for (const message of batch.messages) {
       try {
+        await ensureDatabaseSchema(env.DB)
         if (message.body.type === "meta_sync")
           await consumeMetaSync(env, message.body)
         else if (message.body.type === "gateway_sync")
