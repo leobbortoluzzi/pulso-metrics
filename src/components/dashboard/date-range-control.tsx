@@ -1,6 +1,7 @@
 import { useState } from "react"
 import { CalendarDays, ChevronDown } from "lucide-react"
 import { Popover } from "@/components/dashboard/popover"
+import { isDateRangeWithinLimit, MAX_DATE_RANGE_DAYS } from "@/lib/date-range"
 import {
   dateRangeForDays,
   formatRange,
@@ -87,8 +88,8 @@ function DateRangeForm({
       </label>
       <p aria-live="polite" className={valid ? "range-hint" : "range-error"}>
         {valid
-          ? "Escolha um intervalo de até 90 dias."
-          : "Informe datas válidas em um intervalo máximo de 90 dias."}
+          ? `Escolha um intervalo de até ${MAX_DATE_RANGE_DAYS} dias.`
+          : `Informe datas válidas em um intervalo máximo de ${MAX_DATE_RANGE_DAYS} dias.`}
       </p>
       <button className="button button-primary" disabled={!valid} type="submit">
         Aplicar período
@@ -99,13 +100,7 @@ function DateRangeForm({
 
 function isValidRange(from: string, to: string) {
   if (!from || !to || from > to || to > today()) return false
-  const start = Date.parse(`${from}T00:00:00Z`)
-  const end = Date.parse(`${to}T00:00:00Z`)
-  return (
-    Number.isFinite(start) &&
-    Number.isFinite(end) &&
-    end - start <= 90 * 86_400_000
-  )
+  return isDateRangeWithinLimit(from, to)
 }
 
 function today() {

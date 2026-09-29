@@ -7,7 +7,6 @@ import {
   BarChart3,
   Bell,
   Check,
-  ChevronDown,
   ChevronRight,
   CircleHelp,
   Clock3,
@@ -42,6 +41,63 @@ import {
 import { Pagination } from "@/components/dashboard/pagination"
 import { Popover } from "@/components/dashboard/popover"
 import { SaleDetails } from "@/components/dashboard/sale-details"
+import {
+  Alert,
+  AlertAction,
+  AlertDescription,
+  AlertTitle,
+} from "@/components/ui/alert"
+import { Avatar, AvatarFallback } from "@/components/ui/avatar"
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import {
+  Card,
+  CardAction,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import {
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "@/components/ui/empty"
+import { Input } from "@/components/ui/input"
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import { Separator } from "@/components/ui/separator"
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
 import { currencyMinorUnit } from "@/lib/metrics"
 import {
   summarizeSales,
@@ -61,6 +117,7 @@ import {
 
 type Page = "overview" | "sales" | "integrations"
 type Period = number
+const periodOptions: Period[] = [7, 14, 30, 90, 120]
 type Level = "Campanhas" | "Conjuntos" | "Anúncios"
 type Gateway = "Todos os gateways" | "Hotmart" | "Kiwify"
 type CampaignPerformanceFilter = "all" | "with-sales" | "without-sales"
@@ -120,6 +177,44 @@ const salesCsvHeaders = [
   "status",
   "campanha",
 ]
+
+type FilterSelectOption = { value: string; label: string }
+
+function FilterSelect({
+  value,
+  onValueChange,
+  options,
+  ariaLabel,
+  className,
+}: {
+  value: string
+  onValueChange: (value: string) => void
+  options: FilterSelectOption[]
+  ariaLabel: string
+  className?: string
+}) {
+  return (
+    <Select
+      value={value}
+      onValueChange={(nextValue) => {
+        if (nextValue !== null) onValueChange(nextValue)
+      }}
+    >
+      <SelectTrigger aria-label={ariaLabel} className={className}>
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent align="start">
+        <SelectGroup>
+          {options.map((option) => (
+            <SelectItem key={option.value} value={option.value}>
+              {option.label}
+            </SelectItem>
+          ))}
+        </SelectGroup>
+      </SelectContent>
+    </Select>
+  )
+}
 
 function App() {
   const [authState, setAuthState] = useState<
@@ -1329,7 +1424,9 @@ function App() {
             label="Menu da conta"
             trigger={
               <>
-                <div className="profile-avatar">A</div>
+                <Avatar className="profile-avatar">
+                  <AvatarFallback>A</AvatarFallback>
+                </Avatar>
                 <span className="profile-copy">
                   <strong>Administrador</strong>
                   <small>Workspace privado</small>
@@ -1469,9 +1566,9 @@ function App() {
             >
               <CircleHelp size={17} /> Ajuda
             </button>
-            <div aria-label="Administrador" className="topbar-avatar">
-              A
-            </div>
+            <Avatar aria-label="Administrador" className="topbar-avatar">
+              <AvatarFallback>A</AvatarFallback>
+            </Avatar>
           </div>
         </header>
 
@@ -1700,55 +1797,75 @@ function OverviewPage(props: OverviewPageProps) {
           <p>Acompanhe o que está funcionando nas suas campanhas.</p>
         </div>
         <div className="heading-actions">
-          <button
-            className="button button-secondary export-button"
+          <Button
+            className="dashboard-action dashboard-action-secondary"
             onClick={props.onExport}
+            size="lg"
+            variant="outline"
           >
-            <Download size={16} /> Exportar
-          </button>
-          <button
-            className="button button-primary"
+            <Download data-icon="inline-start" /> Exportar
+          </Button>
+          <Button
+            className="dashboard-action"
             onClick={props.onSync}
             disabled={props.syncing}
+            size="lg"
           >
-            <RefreshCw size={16} className={props.syncing ? "spin" : ""} />
+            <RefreshCw
+              className={props.syncing ? "spin" : ""}
+              data-icon="inline-start"
+            />
             {props.syncing ? "Atualizando…" : "Atualizar anúncios"}
-          </button>
+          </Button>
         </div>
       </div>
 
       {props.demo && (
-        <div className="demo-notice">
+        <Alert className="demo-notice">
           <span className="notice-spark">
             <Sparkles size={15} />
           </span>
-          <span>
-            <strong>Você está vendo dados de demonstração.</strong> Conecte suas
-            contas nas integrações para começar a acompanhar números reais.
-          </span>
-          <button
-            onClick={() =>
-              window.dispatchEvent(new CustomEvent("navigate-integrations"))
-            }
-          >
-            Configurar agora <ArrowRight size={14} />
-          </button>
-        </div>
+          <div className="demo-notice-copy">
+            <AlertTitle>Dados de demonstração</AlertTitle>
+            <AlertDescription>
+              Conecte suas contas para acompanhar resultados reais.
+            </AlertDescription>
+          </div>
+          <AlertAction className="demo-notice-action">
+            <Button
+              onClick={() =>
+                window.dispatchEvent(new CustomEvent("navigate-integrations"))
+              }
+              size="sm"
+              variant="link"
+            >
+              Configurar agora
+              <ArrowRight data-icon="inline-end" />
+            </Button>
+          </AlertAction>
+        </Alert>
       )}
 
       <div className="filter-bar">
-        <div className="period-switch" role="group" aria-label="Período">
-          {([7, 14, 30] as Period[]).map((days) => (
-            <button
-              key={days}
-              className={
-                isPeriodSelected(props.dateRange, days) ? "selected" : ""
-              }
-              onClick={() => props.setPeriod(days)}
-            >
-              {days} dias
-            </button>
-          ))}
+        <div className="period-switch">
+          <ToggleGroup
+            className="period-toggle"
+            value={
+              isPeriodSelected(props.dateRange, props.period)
+                ? [String(props.period)]
+                : []
+            }
+            onValueChange={(selected) => {
+              if (selected[0]) props.setPeriod(Number(selected[0]))
+            }}
+            aria-label="Período"
+          >
+            {periodOptions.map((days) => (
+              <ToggleGroupItem key={days} value={String(days)}>
+                {days} dias
+              </ToggleGroupItem>
+            ))}
+          </ToggleGroup>
           <DateRangeControl
             onApply={props.onDateRangeApply}
             value={props.dateRange}
@@ -1757,50 +1874,51 @@ function OverviewPage(props: OverviewPageProps) {
         <div className="filter-divider" />
         <div className="select-filter">
           <span>Conta</span>
-          <select
-            aria-label="Filtrar por conta"
-            value={props.accountFilter}
-            onChange={(event) => props.setAccountFilter?.(event.target.value)}
-          >
-            <option value="all">Todas as contas</option>
-            {props.accountOptions.map((account) => (
-              <option key={account.id} value={account.id}>
-                {account.name}
-              </option>
-            ))}
-          </select>
-          <ChevronDown size={13} />
+          <FilterSelect
+            ariaLabel="Filtrar por conta"
+            value={props.accountFilter ?? "all"}
+            onValueChange={(value) => props.setAccountFilter?.(value)}
+            className="select-filter-control"
+            options={[
+              { value: "all", label: "Todas as contas" },
+              ...props.accountOptions.map((account) => ({
+                value: account.id,
+                label: account.name,
+              })),
+            ]}
+          />
         </div>
         <div className="filter-divider filter-divider-small" />
         <div className="select-filter product-filter">
           <span>Produto</span>
-          <select
-            aria-label="Filtrar por produto"
+          <FilterSelect
+            ariaLabel="Filtrar por produto"
             value={props.productFilter}
-            onChange={(event) => props.setProductFilter(event.target.value)}
-          >
-            <option>Todos os produtos</option>
-            {props.productOptions.map((product) => (
-              <option key={product}>{product}</option>
-            ))}
-          </select>
-          <ChevronDown size={13} />
+            onValueChange={props.setProductFilter}
+            className="select-filter-control"
+            options={[
+              { value: "Todos os produtos", label: "Todos os produtos" },
+              ...props.productOptions.map((product) => ({
+                value: product,
+                label: product,
+              })),
+            ]}
+          />
         </div>
         <div className="filter-divider filter-divider-small" />
         <div className="select-filter gateway-filter">
           <span>Gateway</span>
-          <select
-            aria-label="Filtrar por gateway"
+          <FilterSelect
+            ariaLabel="Filtrar por gateway"
             value={props.gatewayFilter}
-            onChange={(event) =>
-              props.setGatewayFilter(event.target.value as Gateway)
-            }
-          >
-            <option>Todos os gateways</option>
-            <option>Hotmart</option>
-            <option>Kiwify</option>
-          </select>
-          <ChevronDown size={13} />
+            onValueChange={(value) => props.setGatewayFilter(value as Gateway)}
+            className="select-filter-control"
+            options={[
+              { value: "Todos os gateways", label: "Todos os gateways" },
+              { value: "Hotmart", label: "Hotmart" },
+              { value: "Kiwify", label: "Kiwify" },
+            ]}
+          />
         </div>
         <Popover
           label="Mais filtros de campanhas"
@@ -1817,26 +1935,22 @@ function OverviewPage(props: OverviewPageProps) {
           {(close) => (
             <div className="popover-actions">
               <strong>Campanhas</strong>
-              <label
-                className="popover-select-label"
-                htmlFor="campaign-performance-filter"
-              >
-                Resultado atribuído
-              </label>
-              <select
-                id="campaign-performance-filter"
-                onChange={(event) =>
+              <span className="popover-select-label">Resultado atribuído</span>
+              <FilterSelect
+                ariaLabel="Filtrar resultado atribuído"
+                value={props.campaignPerformanceFilter}
+                onValueChange={(value) =>
                   props.setCampaignPerformanceFilter(
-                    event.target
-                      .value as OverviewPageProps["campaignPerformanceFilter"]
+                    value as OverviewPageProps["campaignPerformanceFilter"]
                   )
                 }
-                value={props.campaignPerformanceFilter}
-              >
-                <option value="all">Todas as campanhas</option>
-                <option value="with-sales">Com vendas</option>
-                <option value="without-sales">Sem vendas</option>
-              </select>
+                className="advanced-filter-select"
+                options={[
+                  { value: "all", label: "Todas as campanhas" },
+                  { value: "with-sales", label: "Com vendas" },
+                  { value: "without-sales", label: "Sem vendas" },
+                ]}
+              />
               <button
                 onClick={() => {
                   props.setCampaignPerformanceFilter("all")
@@ -1852,12 +1966,12 @@ function OverviewPage(props: OverviewPageProps) {
       </div>
 
       {props.error && (
-        <div className="inline-error" role="alert">
-          <span>{props.error}</span>
-          <button onClick={props.onRetry} type="button">
+        <Alert className="inline-error" variant="destructive">
+          <AlertDescription>{props.error}</AlertDescription>
+          <Button onClick={props.onRetry} size="sm" variant="outline">
             Tentar novamente
-          </button>
-        </div>
+          </Button>
+        </Alert>
       )}
       {props.loading && (
         <div aria-live="polite" className="loading-note">
@@ -1874,7 +1988,6 @@ function OverviewPage(props: OverviewPageProps) {
           positive={false}
           icon={<Wallet size={16} />}
           iconStyle="sage"
-          progress={71}
         />
         <MetricCard
           label="Receita líquida"
@@ -1884,7 +1997,6 @@ function OverviewPage(props: OverviewPageProps) {
           positive
           icon={<CircleDollarIcon />}
           iconStyle="lime"
-          progress={82}
         />
         <MetricCard
           label="ROAS"
@@ -1898,7 +2010,6 @@ function OverviewPage(props: OverviewPageProps) {
           positive
           icon={<BarChart3 size={16} />}
           iconStyle="lavender"
-          progress={76}
         />
         <MetricCard
           label="ROI"
@@ -1912,7 +2023,6 @@ function OverviewPage(props: OverviewPageProps) {
           positive
           icon={<ArrowUpRight size={17} />}
           iconStyle="coral"
-          progress={68}
         />
       </section>
 
@@ -1939,27 +2049,30 @@ function OverviewPage(props: OverviewPageProps) {
       </div>
 
       <div className="analytics-grid">
-        <section className="panel performance-panel">
-          <div className="panel-header chart-header">
+        <Card className="panel performance-panel">
+          <CardHeader className="panel-header chart-header">
             <div>
               <div className="panel-kicker">RESULTADO AO LONGO DO TEMPO</div>
               <h2>Ritmo de performance</h2>
             </div>
             <div className="chart-actions">
-              <div className="chart-switch">
-                <button
-                  className={props.chartMode === "Receita" ? "active" : ""}
-                  onClick={() => props.setChartMode("Receita")}
-                >
-                  Receita
-                </button>
-                <button
-                  className={props.chartMode === "Investimento" ? "active" : ""}
-                  onClick={() => props.setChartMode("Investimento")}
-                >
+              <ToggleGroup
+                aria-label="Métrica do gráfico"
+                className="chart-switch"
+                onValueChange={(selected) => {
+                  if (selected[0]) {
+                    props.setChartMode(
+                      selected[0] as "Receita" | "Investimento"
+                    )
+                  }
+                }}
+                value={[props.chartMode]}
+              >
+                <ToggleGroupItem value="Receita">Receita</ToggleGroupItem>
+                <ToggleGroupItem value="Investimento">
                   Investimento
-                </button>
-              </div>
+                </ToggleGroupItem>
+              </ToggleGroup>
               <Popover
                 label="Opções do gráfico"
                 trigger={<MoreHorizontal size={19} />}
@@ -1982,42 +2095,45 @@ function OverviewPage(props: OverviewPageProps) {
                 )}
               </Popover>
             </div>
-          </div>
-          <div className="chart-legend">
-            <span
-              className={`legend-dot ${props.chartMode === "Receita" ? "legend-lime" : "legend-pine"}`}
+          </CardHeader>
+          <CardContent className="performance-panel-content">
+            <div className="chart-legend">
+              <span
+                className={`legend-dot ${props.chartMode === "Receita" ? "legend-lime" : "legend-pine"}`}
+              />
+              {props.chartMode}{" "}
+              <span className="chart-total">
+                {compactCurrency.format(
+                  props.chartMode === "Receita"
+                    ? props.totals.revenue
+                    : props.totals.spend
+                )}
+              </span>
+              <span className="chart-legend-note">no período selecionado</span>
+            </div>
+            <PerformanceChart
+              mode={props.chartMode}
+              days={daysBetween(props.dateRange)}
+              data={props.dailyData}
             />
-            {props.chartMode}{" "}
-            <span className="chart-total">
-              {compactCurrency.format(
-                props.chartMode === "Receita"
-                  ? props.totals.revenue
-                  : props.totals.spend
-              )}
-            </span>
-            <span className="chart-legend-note">no período selecionado</span>
-          </div>
-          <PerformanceChart
-            mode={props.chartMode}
-            days={daysBetween(props.dateRange)}
-            data={props.dailyData}
-          />
-          <div className="chart-footer">
-            <span>{chartBoundary(props.dateRange, "start")}</span>
-            <span>{chartBoundary(props.dateRange, "middle")}</span>
-            <span>{chartBoundary(props.dateRange, "end")}</span>
-            <span className="chart-timezone">
-              Fuso:{" "}
-              {accountName
-                ? props.accountOptions.find((item) => item.name === accountName)
-                    ?.timezone
-                : "Horário da conta"}
-            </span>
-          </div>
-        </section>
+            <div className="chart-footer">
+              <span>{chartBoundary(props.dateRange, "start")}</span>
+              <span>{chartBoundary(props.dateRange, "middle")}</span>
+              <span>{chartBoundary(props.dateRange, "end")}</span>
+              <span className="chart-timezone">
+                Fuso:{" "}
+                {accountName
+                  ? props.accountOptions.find(
+                      (item) => item.name === accountName
+                    )?.timezone
+                  : "Horário da conta"}
+              </span>
+            </div>
+          </CardContent>
+        </Card>
 
-        <section className="panel attribution-panel">
-          <div className="panel-header">
+        <Card className="panel attribution-panel">
+          <CardHeader className="panel-header">
             <div>
               <div className="panel-kicker">QUALIDADE DOS DADOS</div>
               <h2>Atribuição de vendas</h2>
@@ -2039,110 +2155,115 @@ function OverviewPage(props: OverviewPageProps) {
                 </div>
               )}
             </Popover>
-          </div>
-          <div className="match-summary">
-            <div
-              className="match-gauge"
-              style={
-                {
-                  "--match": `${props.totals.matchRate}%`,
-                } as React.CSSProperties
+          </CardHeader>
+          <CardContent className="attribution-panel-content">
+            <div className="match-summary">
+              <div
+                className="match-gauge"
+                style={
+                  {
+                    "--match": `${props.totals.matchRate}%`,
+                  } as React.CSSProperties
+                }
+              >
+                <div className="gauge-inner">
+                  <strong>{props.totals.matchRate}%</strong>
+                  <span>atribuídas</span>
+                </div>
+              </div>
+              <div className="match-copy">
+                <strong>Boa leitura de origem</strong>
+                <span>Pedidos vinculados a uma campanha.</span>
+                <div className="match-status">
+                  <BadgeCheck size={14} /> Acompanhamento saudável
+                </div>
+              </div>
+            </div>
+            <Separator className="attribution-divider" />
+            <div className="source-row">
+              <span className="source-icon source-meta">
+                <Activity size={15} />
+              </span>
+              <span className="source-name">Meta Ads</span>
+              <strong>
+                {props.demo
+                  ? "3 contas"
+                  : `${props.accountOptions.length} contas`}
+              </strong>
+              <span className="source-status">
+                <i />{" "}
+                {props.demo
+                  ? "Exemplo"
+                  : props.integrationStatus.meta
+                    ? "Conectado"
+                    : "Pendente"}
+              </span>
+            </div>
+            <div className="source-row">
+              <span className="source-icon source-hotmart">H</span>
+              <span className="source-name">Hotmart</span>
+              <strong>
+                {props.demo
+                  ? "2 produtos"
+                  : props.integrationStatus.hotmart
+                    ? "Configurado"
+                    : "—"}
+              </strong>
+              <span className="source-status">
+                <i />{" "}
+                {props.demo
+                  ? "Exemplo"
+                  : props.integrationStatus.hotmart
+                    ? "Conectado"
+                    : "Pendente"}
+              </span>
+            </div>
+            <div className="source-row">
+              <span className="source-icon source-kiwify">K</span>
+              <span className="source-name">Kiwify</span>
+              <strong>
+                {props.demo
+                  ? "2 produtos"
+                  : props.integrationStatus.kiwify
+                    ? "Configurado"
+                    : "—"}
+              </strong>
+              <span className="source-status">
+                <i />{" "}
+                {props.demo
+                  ? "Exemplo"
+                  : props.integrationStatus.kiwify
+                    ? "Conectado"
+                    : "Pendente"}
+              </span>
+            </div>
+            <button
+              className="panel-link"
+              onClick={() =>
+                window.dispatchEvent(new CustomEvent("navigate-integrations"))
               }
             >
-              <div className="gauge-inner">
-                <strong>{props.totals.matchRate}%</strong>
-                <span>atribuídas</span>
-              </div>
-            </div>
-            <div className="match-copy">
-              <strong>Boa leitura de origem</strong>
-              <span>Pedidos vinculados a uma campanha.</span>
-              <div className="match-status">
-                <BadgeCheck size={14} /> Acompanhamento saudável
-              </div>
-            </div>
-          </div>
-          <div className="attribution-divider" />
-          <div className="source-row">
-            <span className="source-icon source-meta">
-              <Activity size={15} />
-            </span>
-            <span className="source-name">Meta Ads</span>
-            <strong>
-              {props.demo
-                ? "3 contas"
-                : `${props.accountOptions.length} contas`}
-            </strong>
-            <span className="source-status">
-              <i />{" "}
-              {props.demo
-                ? "Exemplo"
-                : props.integrationStatus.meta
-                  ? "Conectado"
-                  : "Pendente"}
-            </span>
-          </div>
-          <div className="source-row">
-            <span className="source-icon source-hotmart">H</span>
-            <span className="source-name">Hotmart</span>
-            <strong>
-              {props.demo
-                ? "2 produtos"
-                : props.integrationStatus.hotmart
-                  ? "Configurado"
-                  : "—"}
-            </strong>
-            <span className="source-status">
-              <i />{" "}
-              {props.demo
-                ? "Exemplo"
-                : props.integrationStatus.hotmart
-                  ? "Conectado"
-                  : "Pendente"}
-            </span>
-          </div>
-          <div className="source-row">
-            <span className="source-icon source-kiwify">K</span>
-            <span className="source-name">Kiwify</span>
-            <strong>
-              {props.demo
-                ? "2 produtos"
-                : props.integrationStatus.kiwify
-                  ? "Configurado"
-                  : "—"}
-            </strong>
-            <span className="source-status">
-              <i />{" "}
-              {props.demo
-                ? "Exemplo"
-                : props.integrationStatus.kiwify
-                  ? "Conectado"
-                  : "Pendente"}
-            </span>
-          </div>
-          <button
-            className="panel-link"
-            onClick={() =>
-              window.dispatchEvent(new CustomEvent("navigate-integrations"))
-            }
-          >
-            Ver integrações <ArrowRight size={14} />
-          </button>
-        </section>
+              Ver integrações <ArrowRight size={14} />
+            </button>
+          </CardContent>
+        </Card>
       </div>
 
-      <section className="panel campaigns-panel">
-        <div className="panel-header campaign-header">
+      <Card className="panel campaigns-panel">
+        <CardHeader className="panel-header campaign-header">
           <div>
             <div className="panel-kicker">DETALHAMENTO</div>
             <h2>
-              Campanhas <span className="table-count">{props.rows.length}</span>
+              Campanhas{" "}
+              <Badge className="table-count" variant="secondary">
+                {props.rows.length}
+              </Badge>
             </h2>
           </div>
           <div className="table-tools">
             <div className="table-search">
               <Search size={15} />
-              <input
+              <Input
                 aria-label="Buscar campanha"
                 placeholder="Buscar campanha..."
                 value={props.query}
@@ -2150,19 +2271,22 @@ function OverviewPage(props: OverviewPageProps) {
               />
               <kbd>⌘ K</kbd>
             </div>
-            <div className="level-switch">
+            <ToggleGroup
+              aria-label="Nível de detalhamento"
+              className="level-switch"
+              onValueChange={(selected) => {
+                if (selected[0]) props.setLevel(selected[0] as Level)
+              }}
+              value={[props.level]}
+            >
               {(["Campanhas", "Conjuntos", "Anúncios"] as Level[]).map(
                 (tab) => (
-                  <button
-                    key={tab}
-                    className={props.level === tab ? "active" : ""}
-                    onClick={() => props.setLevel(tab)}
-                  >
+                  <ToggleGroupItem key={tab} value={tab}>
                     {tab}
-                  </button>
+                  </ToggleGroupItem>
                 )
               )}
-            </div>
+            </ToggleGroup>
             <Popover
               label="Configurar colunas da tabela"
               trigger={<Settings2 size={17} />}
@@ -2191,7 +2315,7 @@ function OverviewPage(props: OverviewPageProps) {
               )}
             </Popover>
           </div>
-        </div>
+        </CardHeader>
         {props.selectedCampaignIds.length > 0 && (
           <div className="selection-toolbar">
             <span>
@@ -2208,21 +2332,23 @@ function OverviewPage(props: OverviewPageProps) {
             </button>
           </div>
         )}
-        <CampaignTable
-          rows={props.rows}
-          level={props.level}
-          period={props.period}
-          accounts={props.accountOptions}
-          live={props.live}
-          page={props.campaignPage}
-          setPage={props.setCampaignPage}
-          selectedIds={props.selectedCampaignIds}
-          setSelectedIds={props.setSelectedCampaignIds}
-          columns={props.campaignColumns}
-          onShowSales={props.onShowCampaignSales}
-          onToast={props.onToast}
-        />
-      </section>
+        <CardContent className="campaigns-panel-content">
+          <CampaignTable
+            rows={props.rows}
+            level={props.level}
+            period={props.period}
+            accounts={props.accountOptions}
+            live={props.live}
+            page={props.campaignPage}
+            setPage={props.setCampaignPage}
+            selectedIds={props.selectedCampaignIds}
+            setSelectedIds={props.setSelectedCampaignIds}
+            columns={props.campaignColumns}
+            onShowSales={props.onShowCampaignSales}
+            onToast={props.onToast}
+          />
+        </CardContent>
+      </Card>
       <div className="disclaimer">
         <Clock3 size={13} /> Os dados são atualizados sob demanda. Vendas são
         contabilizadas pelo valor aprovado, descontados reembolsos e
@@ -2240,7 +2366,6 @@ function MetricCard({
   positive,
   icon,
   iconStyle,
-  progress,
 }: {
   label: string
   value: string
@@ -2249,43 +2374,51 @@ function MetricCard({
   positive: boolean
   icon: React.ReactNode
   iconStyle: string
-  progress: number
 }) {
   return (
-    <article className="metric-card">
-      <div className="metric-card-top">
-        <span className={`metric-icon ${iconStyle}`}>{icon}</span>
-      </div>
-      <div className="metric-label">
-        {label}
-        <span className="metric-info" title={detail}>
-          i
-        </span>
-      </div>
-      <div className="metric-value">{value}</div>
-      <div className="metric-card-bottom">
-        {trend ? (
-          <>
-            <span
-              className={`trend-pill ${positive ? "trend-positive" : "trend-negative"}`}
-            >
-              {positive ? (
-                <ArrowUpRight size={13} />
-              ) : (
-                <ArrowDownRight size={13} />
-              )}
-              {trend}
-            </span>
-            <span className="metric-comparison">vs. período anterior</span>
-          </>
-        ) : (
-          <span className="metric-comparison">no período selecionado</span>
-        )}
-      </div>
-      <div className="metric-progress">
-        <span style={{ width: `${progress}%` }} />
-      </div>
-    </article>
+    <Card className="metric-card">
+      <CardHeader className="metric-card-top">
+        <CardTitle className="metric-label">
+          {label}
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  aria-label={`Sobre ${label}`}
+                  className="metric-info"
+                  type="button"
+                >
+                  i
+                </button>
+              }
+            />
+            <TooltipContent>{detail}</TooltipContent>
+          </Tooltip>
+        </CardTitle>
+        <CardAction>
+          <span className={`metric-icon ${iconStyle}`}>{icon}</span>
+        </CardAction>
+      </CardHeader>
+      <CardContent className="metric-card-content">
+        <div className="metric-value">{value}</div>
+        <div className="metric-card-bottom">
+          {trend ? (
+            <>
+              <Badge
+                className={`trend-pill ${positive ? "trend-positive" : "trend-negative"}`}
+                variant={positive ? "secondary" : "destructive"}
+              >
+                {positive ? <ArrowUpRight /> : <ArrowDownRight />}
+                {trend}
+              </Badge>
+              <span className="metric-comparison">vs. período anterior</span>
+            </>
+          ) : (
+            <span className="metric-comparison">no período selecionado</span>
+          )}
+        </div>
+      </CardContent>
+    </Card>
   )
 }
 
@@ -2345,7 +2478,7 @@ function PerformanceChart({
             className="chart-gridline"
           />
         ))}
-        <path d={area} fill="#0066cc" fillOpacity=".08" />
+        <path d={area} fill="var(--chart-2)" fillOpacity=".11" />
         <path
           d={line}
           fill="none"
@@ -2450,182 +2583,198 @@ function CampaignTable({
 
   if (!rows.length)
     return (
-      <div className="empty-state">
-        <Search size={21} />
-        <strong>Nenhuma campanha encontrada</strong>
-        <span>Tente ajustar os filtros para ampliar os resultados.</span>
-      </div>
+      <Empty className="empty-state">
+        <EmptyHeader>
+          <EmptyMedia variant="icon">
+            <Search />
+          </EmptyMedia>
+          <EmptyTitle>Nenhuma campanha encontrada</EmptyTitle>
+          <EmptyDescription>
+            Tente ajustar os filtros para ampliar os resultados.
+          </EmptyDescription>
+        </EmptyHeader>
+      </Empty>
     )
 
   return (
     <>
-      <div className="table-scroll">
-        <table className="data-table campaign-table">
-          <thead>
-            <tr>
-              <th className="check-cell">
-                <input
-                  aria-label="Selecionar todas as campanhas desta página"
-                  checked={allSelected}
-                  onChange={(event) => togglePage(event.target.checked)}
-                  type="checkbox"
-                />
-              </th>
-              <th className="campaign-name-head">
-                {level === "Campanhas"
-                  ? "Campanha"
-                  : level === "Conjuntos"
-                    ? "Conjunto de anúncios"
-                    : "Anúncio"}
-              </th>
-              {columns.account && <th>Conta de anúncio</th>}
-              {columns.spend && <th>Investimento</th>}
-              {columns.sales && <th>Vendas</th>}
-              {columns.revenue && <th>Receita líquida</th>}
-              {columns.roas && <th>ROAS</th>}
-              {columns.ctr && <th>CTR</th>}
-              <th aria-label="Ações" />
-            </tr>
-          </thead>
-          <tbody>
-            {pageRows.map(({ campaign, name, id, scale: rowScale }, index) => {
-              const factor = live ? 1 : (period / 14) * rowScale
-              const spend = campaign.spend * factor
-              const revenue = campaign.revenue * factor
-              const account = accountOptions.find(
-                (item) => item.id === campaign.accountId
-              )
-              const initials =
-                account?.initials ??
-                campaign.accountName
-                  ?.split(/\s+/)
-                  .slice(0, 2)
-                  .map((word) => word[0])
-                  .join("")
-                  .toUpperCase() ??
-                "—"
-              const roas = spend > 0 ? revenue / spend : null
-              return (
-                <tr key={id}>
-                  <td className="check-cell">
-                    <input
-                      aria-label={`Selecionar campanha ${name}`}
-                      checked={selectedIds.includes(campaign.id)}
-                      onChange={(event) =>
-                        toggleCampaign(campaign.id, event.target.checked)
-                      }
-                      type="checkbox"
-                    />
-                  </td>
-                  <td>
-                    <div className="campaign-cell">
-                      <span
-                        className={`campaign-platform ${index % 2 ? "platform-meta" : ""}`}
-                      >
-                        <Activity size={14} />
-                      </span>
-                      <span className="campaign-copy">
-                        <strong title={name}>{name}</strong>
-                        <small>
-                          <span
-                            className={`status-dot ${campaign.status === "Ativa" ? "status-live" : campaign.status === "Pausada" ? "status-paused" : "status-unknown"}`}
-                          />
-                          {campaign.status}{" "}
-                          <span className="cell-separator">·</span> ID{" "}
-                          {id.slice(-6)}
-                        </small>
-                      </span>
-                    </div>
-                  </td>
-                  {columns.account && (
-                    <td>
-                      <div className="account-cell">
+      <Table
+        className="data-table campaign-table"
+        containerClassName="table-scroll"
+      >
+        <TableHeader>
+          <TableRow>
+            <TableHead className="check-cell">
+              <input
+                aria-label="Selecionar todas as campanhas desta página"
+                checked={allSelected}
+                onChange={(event) => togglePage(event.target.checked)}
+                type="checkbox"
+              />
+            </TableHead>
+            <TableHead className="campaign-name-head">
+              {level === "Campanhas"
+                ? "Campanha"
+                : level === "Conjuntos"
+                  ? "Conjunto de anúncios"
+                  : "Anúncio"}
+            </TableHead>
+            {columns.account && <TableHead>Conta de anúncio</TableHead>}
+            {columns.spend && <TableHead>Investimento</TableHead>}
+            {columns.sales && <TableHead>Vendas</TableHead>}
+            {columns.revenue && <TableHead>Receita líquida</TableHead>}
+            {columns.roas && <TableHead>ROAS</TableHead>}
+            {columns.ctr && <TableHead>CTR</TableHead>}
+            <TableHead aria-label="Ações" />
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {pageRows.map(({ campaign, name, id, scale: rowScale }, index) => {
+            const factor = live ? 1 : (period / 14) * rowScale
+            const spend = campaign.spend * factor
+            const revenue = campaign.revenue * factor
+            const account = accountOptions.find(
+              (item) => item.id === campaign.accountId
+            )
+            const initials =
+              account?.initials ??
+              campaign.accountName
+                ?.split(/\s+/)
+                .slice(0, 2)
+                .map((word) => word[0])
+                .join("")
+                .toUpperCase() ??
+              "—"
+            const roas = spend > 0 ? revenue / spend : null
+            return (
+              <TableRow key={id}>
+                <TableCell className="check-cell">
+                  <input
+                    aria-label={`Selecionar campanha ${name}`}
+                    checked={selectedIds.includes(campaign.id)}
+                    onChange={(event) =>
+                      toggleCampaign(campaign.id, event.target.checked)
+                    }
+                    type="checkbox"
+                  />
+                </TableCell>
+                <TableCell>
+                  <div className="campaign-cell">
+                    <span
+                      className={`campaign-platform ${index % 2 ? "platform-meta" : ""}`}
+                    >
+                      <Activity size={14} />
+                    </span>
+                    <span className="campaign-copy">
+                      <strong title={name}>{name}</strong>
+                      <small>
                         <span
-                          className="account-avatar table-avatar"
+                          className={`status-dot ${campaign.status === "Ativa" ? "status-live" : campaign.status === "Pausada" ? "status-paused" : "status-unknown"}`}
+                        />
+                        {campaign.status}{" "}
+                        <span className="cell-separator">·</span> ID{" "}
+                        {id.slice(-6)}
+                      </small>
+                    </span>
+                  </div>
+                </TableCell>
+                {columns.account && (
+                  <TableCell>
+                    <div className="account-cell">
+                      <Avatar className="table-avatar" size="sm">
+                        <AvatarFallback
                           style={{
                             backgroundColor: account?.color ?? accountColors[0],
                           }}
                         >
                           {initials}
-                        </span>
-                        <span>
-                          {account?.name ??
-                            campaign.accountName ??
-                            campaign.accountId}
-                        </span>
-                      </div>
-                    </td>
-                  )}
-                  {columns.spend && (
-                    <td className="numeric-cell">{currency.format(spend)}</td>
-                  )}
-                  {columns.sales && (
-                    <td className="numeric-cell">
-                      {numberFormat.format(Math.round(campaign.sales * factor))}
-                    </td>
-                  )}
-                  {columns.revenue && (
-                    <td className="numeric-cell revenue-cell">
-                      {currency.format(revenue)}
-                    </td>
-                  )}
-                  {columns.roas && (
-                    <td>
-                      <span
-                        className={`roas-badge ${roas !== null && roas >= 3 ? "roas-good" : "roas-mid"}`}
-                      >
-                        {roas === null
-                          ? "—"
-                          : `${roas.toFixed(2).replace(".", ",")}x`}
+                        </AvatarFallback>
+                      </Avatar>
+                      <span>
+                        {account?.name ??
+                          campaign.accountName ??
+                          campaign.accountId}
                       </span>
-                    </td>
-                  )}
-                  {columns.ctr && (
-                    <td className="numeric-cell">
-                      {campaign.impressions > 0
-                        ? `${((campaign.clicks / campaign.impressions) * 100).toFixed(2).replace(".", ",")}%`
-                        : "—"}
-                    </td>
-                  )}
-                  <td>
-                    <Popover
-                      label={`Opções para ${name}`}
-                      trigger={<MoreHorizontal size={17} />}
-                      triggerClassName="icon-button row-menu"
-                      panelClassName="row-action-menu"
-                      portal
+                    </div>
+                  </TableCell>
+                )}
+                {columns.spend && (
+                  <TableCell className="numeric-cell">
+                    {currency.format(spend)}
+                  </TableCell>
+                )}
+                {columns.sales && (
+                  <TableCell className="numeric-cell">
+                    {numberFormat.format(Math.round(campaign.sales * factor))}
+                  </TableCell>
+                )}
+                {columns.revenue && (
+                  <TableCell className="numeric-cell revenue-cell">
+                    {currency.format(revenue)}
+                  </TableCell>
+                )}
+                {columns.roas && (
+                  <TableCell>
+                    <Badge
+                      className="roas-badge"
+                      variant={
+                        roas !== null && roas >= 3 ? "default" : "secondary"
+                      }
                     >
-                      {(close) => (
-                        <div className="popover-actions">
-                          <strong>Ações da campanha</strong>
-                          <button
-                            onClick={() => {
-                              void copyCampaignId(campaign.id, onToast)
-                              close()
-                            }}
-                            type="button"
-                          >
-                            <Copy size={15} /> Copiar ID
-                          </button>
-                          <button
-                            onClick={() => {
-                              onShowSales(campaign)
-                              close()
-                            }}
-                            type="button"
-                          >
-                            <ShoppingBag size={15} /> Ver vendas atribuídas
-                          </button>
-                        </div>
-                      )}
-                    </Popover>
-                  </td>
-                </tr>
-              )
-            })}
-          </tbody>
-        </table>
-      </div>
+                      {roas === null
+                        ? "—"
+                        : `${roas.toFixed(2).replace(".", ",")}x`}
+                    </Badge>
+                  </TableCell>
+                )}
+                {columns.ctr && (
+                  <TableCell className="numeric-cell">
+                    {campaign.impressions > 0
+                      ? `${((campaign.clicks / campaign.impressions) * 100).toFixed(2).replace(".", ",")}%`
+                      : "—"}
+                  </TableCell>
+                )}
+                <TableCell>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger
+                      render={
+                        <Button
+                          aria-label={`Opções para ${name}`}
+                          className="row-menu"
+                          size="icon"
+                          variant="ghost"
+                        >
+                          <MoreHorizontal />
+                        </Button>
+                      }
+                    />
+                    <DropdownMenuContent
+                      align="end"
+                      className="row-action-menu"
+                    >
+                      <DropdownMenuGroup>
+                        <DropdownMenuLabel>Ações da campanha</DropdownMenuLabel>
+                        <DropdownMenuItem
+                          onClick={() =>
+                            void copyCampaignId(campaign.id, onToast)
+                          }
+                        >
+                          <Copy data-icon="inline-start" /> Copiar ID
+                        </DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem onClick={() => onShowSales(campaign)}>
+                          <ShoppingBag data-icon="inline-start" />
+                          Ver vendas atribuídas
+                        </DropdownMenuItem>
+                      </DropdownMenuGroup>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </TableCell>
+              </TableRow>
+            )
+          })}
+        </TableBody>
+      </Table>
       <div className="table-footer">
         <span>
           Exibindo{" "}
@@ -2693,297 +2842,354 @@ function SalesPage(props: SalesPageProps) {
           <p>Pedidos dos seus gateways, com origem e status em um só lugar.</p>
         </div>
         <div className="heading-actions">
-          <button
-            className="button button-secondary"
+          <Button
+            className="dashboard-action dashboard-action-secondary"
             onClick={props.onExport}
-            type="button"
+            size="lg"
+            variant="outline"
           >
-            <Download size={16} /> Exportar
-          </button>
-          <button
-            className="button button-primary"
+            <Download data-icon="inline-start" /> Exportar
+          </Button>
+          <Button
+            className="dashboard-action"
             onClick={props.onReconcile}
             disabled={props.reconciling}
-            type="button"
+            size="lg"
           >
-            <RefreshCw size={16} className={props.reconciling ? "spin" : ""} />
+            <RefreshCw
+              className={props.reconciling ? "spin" : ""}
+              data-icon="inline-start"
+            />
             {props.reconciling ? "Buscando…" : "Reconciliar vendas"}
-          </button>
+          </Button>
         </div>
       </div>
       {props.demo && (
-        <div className="demo-notice">
+        <Alert className="demo-notice">
           <span className="notice-spark">
             <Sparkles size={15} />
           </span>
-          <span>
-            <strong>Dados fictícios para demonstração.</strong> As compras reais
-            entram pelos webhooks e pela reconciliação dos gateways.
-          </span>
-          <button
-            onClick={() =>
-              window.dispatchEvent(new CustomEvent("navigate-integrations"))
-            }
-            type="button"
-          >
-            Configurar gateways <ArrowRight size={14} />
-          </button>
-        </div>
+          <div className="demo-notice-copy">
+            <AlertTitle>Dados de demonstração</AlertTitle>
+            <AlertDescription>
+              Pedidos reais chegam pelos webhooks e pela reconciliação dos
+              gateways.
+            </AlertDescription>
+          </div>
+          <AlertAction className="demo-notice-action">
+            <Button
+              onClick={() =>
+                window.dispatchEvent(new CustomEvent("navigate-integrations"))
+              }
+              size="sm"
+              variant="link"
+            >
+              Configurar gateways
+              <ArrowRight data-icon="inline-end" />
+            </Button>
+          </AlertAction>
+        </Alert>
       )}
       <div className="sales-summary-grid">
-        <div className="sales-summary-card">
-          <span>Pedidos no período</span>
-          <strong>{summary?.total ?? 0}</strong>
-          <small>{summary?.approved ?? 0} aprovados</small>
-        </div>
-        <div className="sales-summary-card">
-          <span>Receita aprovada</span>
-          <strong>{currency.format(summary?.approvedRevenue ?? 0)}</strong>
-          <small>
-            {summary?.approvedAmountCount !== summary?.approved
-              ? "Valores convertidos para BRL"
-              : "Reembolsos e chargebacks excluídos"}
-          </small>
-        </div>
-        <div className="sales-summary-card">
-          <span>Com atribuição</span>
-          <strong>
-            {summary?.matched ?? 0} <em>/ {summary?.total ?? 0}</em>
-          </strong>
-          <small>{matchedRate}% vinculados a anúncios</small>
-        </div>
-        <div className="sales-summary-card">
-          <span>Ticket médio</span>
-          <strong>
-            {summary?.averageTicket === null || !summary
-              ? "—"
-              : currency.format(summary.averageTicket)}
-          </strong>
-          <small>Pedidos aprovados convertidos</small>
-        </div>
+        <Card className="sales-summary-card">
+          <CardHeader className="sales-summary-header">
+            <CardTitle>Pedidos no período</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <strong className="sales-summary-value">
+              {summary?.total ?? 0}
+            </strong>
+            <CardDescription>
+              {summary?.approved ?? 0} aprovados
+            </CardDescription>
+          </CardContent>
+        </Card>
+        <Card className="sales-summary-card">
+          <CardHeader className="sales-summary-header">
+            <CardTitle>Receita aprovada</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <strong className="sales-summary-value">
+              {currency.format(summary?.approvedRevenue ?? 0)}
+            </strong>
+            <CardDescription>
+              {summary?.approvedAmountCount !== summary?.approved
+                ? "Valores convertidos para BRL"
+                : "Reembolsos e chargebacks excluídos"}
+            </CardDescription>
+          </CardContent>
+        </Card>
+        <Card className="sales-summary-card">
+          <CardHeader className="sales-summary-header">
+            <CardTitle>Com atribuição</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <strong className="sales-summary-value">
+              {summary?.matched ?? 0} <em>/ {summary?.total ?? 0}</em>
+            </strong>
+            <CardDescription>
+              {matchedRate}% vinculados a anúncios
+            </CardDescription>
+          </CardContent>
+        </Card>
+        <Card className="sales-summary-card">
+          <CardHeader className="sales-summary-header">
+            <CardTitle>Ticket médio</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <strong className="sales-summary-value">
+              {summary?.averageTicket === null || !summary
+                ? "—"
+                : currency.format(summary.averageTicket)}
+            </strong>
+            <CardDescription>Pedidos aprovados convertidos</CardDescription>
+          </CardContent>
+        </Card>
       </div>
-      <section className="panel sales-panel">
-        <div className="panel-header sales-table-heading">
+      <Card className="panel sales-panel">
+        <CardHeader className="panel-header sales-table-heading">
           <div>
             <div className="panel-kicker">TRANSAÇÕES</div>
             <h2>
               Pedidos recebidos{" "}
-              <span className="table-count">{props.total}</span>
+              <Badge className="table-count" variant="secondary">
+                {props.total}
+              </Badge>
             </h2>
           </div>
           <div className="table-tools sales-tools">
             <div className="table-search">
               <Search size={15} />
-              <input
+              <Input
                 aria-label="Buscar venda"
                 placeholder="Buscar por produto, campanha ou ID..."
                 value={props.query}
                 onChange={(event) => props.setQuery(event.target.value)}
               />
             </div>
-            <select
-              className="inline-filter"
-              aria-label="Filtrar gateway"
-              onChange={(event) =>
-                props.setGatewayFilter(event.target.value as Gateway)
-              }
+            <FilterSelect
+              ariaLabel="Filtrar gateway"
               value={props.gatewayFilter}
-            >
-              <option>Todos os gateways</option>
-              <option>Hotmart</option>
-              <option>Kiwify</option>
-            </select>
-          </div>
-        </div>
-        <div className="sales-filter-row">
-          <div className="period-switch" role="group" aria-label="Período">
-            {([7, 14, 30] as Period[]).map((days) => (
-              <button
-                key={days}
-                className={
-                  isPeriodSelected(props.dateRange, days) ? "selected" : ""
-                }
-                onClick={() => props.setPeriod(days)}
-                type="button"
-              >
-                {days} dias
-              </button>
-            ))}
-            <DateRangeControl
-              className="sales-date-range"
-              onApply={props.onDateRangeApply}
-              value={props.dateRange}
+              onValueChange={(value) =>
+                props.setGatewayFilter(value as Gateway)
+              }
+              className="inline-filter"
+              options={[
+                { value: "Todos os gateways", label: "Todos os gateways" },
+                { value: "Hotmart", label: "Hotmart" },
+                { value: "Kiwify", label: "Kiwify" },
+              ]}
             />
           </div>
-          <select
-            className="inline-filter"
-            aria-label="Filtrar conta de anúncio"
-            onChange={(event) => props.setAccountFilter(event.target.value)}
-            value={props.accountFilter}
-          >
-            <option value="all">Todas as contas</option>
-            {props.accountOptions.map((account) => (
-              <option key={account.id} value={account.id}>
-                {account.name}
-              </option>
-            ))}
-          </select>
-          <select
-            className="inline-filter"
-            aria-label="Filtrar produto"
-            onChange={(event) => props.setProductFilter(event.target.value)}
-            value={props.productFilter}
-          >
-            <option>Todos os produtos</option>
-            {props.productOptions.map((product) => (
-              <option key={product}>{product}</option>
-            ))}
-          </select>
-          <select
-            className="inline-filter"
-            aria-label="Filtrar status da venda"
-            onChange={(event) =>
-              props.setStatusFilter(event.target.value as SaleStatusFilter)
-            }
-            value={props.statusFilter}
-          >
-            <option value="all">Todos os status</option>
-            <option value="approved">Aprovadas</option>
-            <option value="refunded">Reembolsadas</option>
-            <option value="chargeback">Chargebacks</option>
-            <option value="pending">Aguardando</option>
-          </select>
-          <select
-            className="inline-filter"
-            aria-label="Filtrar atribuição"
-            onChange={(event) =>
-              props.setAttributionFilter(
-                event.target.value as SaleAttributionFilter
-              )
-            }
-            value={props.attributionFilter}
-          >
-            <option value="all">Toda atribuição</option>
-            <option value="matched">Atribuídas</option>
-            <option value="unmatched">Sem atribuição</option>
-          </select>
-          <div className="sales-live-note">
-            <span /> Atualizado sob demanda
+        </CardHeader>
+        <CardContent className="sales-panel-content">
+          <div className="sales-filter-row">
+            <div className="period-switch">
+              <ToggleGroup
+                aria-label="Período"
+                className="period-toggle"
+                onValueChange={(selected) => {
+                  if (selected[0]) props.setPeriod(Number(selected[0]))
+                }}
+                value={
+                  isPeriodSelected(props.dateRange, props.period)
+                    ? [String(props.period)]
+                    : []
+                }
+              >
+                {periodOptions.map((days) => (
+                  <ToggleGroupItem key={days} value={String(days)}>
+                    {days} dias
+                  </ToggleGroupItem>
+                ))}
+              </ToggleGroup>
+              <DateRangeControl
+                className="sales-date-range"
+                onApply={props.onDateRangeApply}
+                value={props.dateRange}
+              />
+            </div>
+            <FilterSelect
+              className="inline-filter"
+              ariaLabel="Filtrar conta de anúncio"
+              value={props.accountFilter}
+              onValueChange={props.setAccountFilter}
+              options={[
+                { value: "all", label: "Todas as contas" },
+                ...props.accountOptions.map((account) => ({
+                  value: account.id,
+                  label: account.name,
+                })),
+              ]}
+            />
+            <FilterSelect
+              className="inline-filter"
+              ariaLabel="Filtrar produto"
+              value={props.productFilter}
+              onValueChange={props.setProductFilter}
+              options={[
+                { value: "Todos os produtos", label: "Todos os produtos" },
+                ...props.productOptions.map((product) => ({
+                  value: product,
+                  label: product,
+                })),
+              ]}
+            />
+            <FilterSelect
+              className="inline-filter"
+              ariaLabel="Filtrar status da venda"
+              value={props.statusFilter}
+              onValueChange={(value) =>
+                props.setStatusFilter(value as SaleStatusFilter)
+              }
+              options={[
+                { value: "all", label: "Todos os status" },
+                { value: "approved", label: "Aprovadas" },
+                { value: "refunded", label: "Reembolsadas" },
+                { value: "chargeback", label: "Chargebacks" },
+                { value: "pending", label: "Aguardando" },
+              ]}
+            />
+            <FilterSelect
+              className="inline-filter"
+              ariaLabel="Filtrar atribuição"
+              value={props.attributionFilter}
+              onValueChange={(value) =>
+                props.setAttributionFilter(value as SaleAttributionFilter)
+              }
+              options={[
+                { value: "all", label: "Toda atribuição" },
+                { value: "matched", label: "Atribuídas" },
+                { value: "unmatched", label: "Sem atribuição" },
+              ]}
+            />
+            <div className="sales-live-note">
+              <span /> Atualizado sob demanda
+            </div>
           </div>
-        </div>
-        {props.error ? (
-          <div className="inline-error sales-error" role="alert">
-            <span>{props.error}</span>
-            <button onClick={props.onRetry} type="button">
-              Tentar novamente
-            </button>
-          </div>
-        ) : props.loading && !props.rows.length ? (
-          <div aria-live="polite" className="loading-state">
-            <RefreshCw className="spin" size={17} /> Carregando transações…
-          </div>
-        ) : props.rows.length ? (
-          <div className="table-scroll">
-            <table className="data-table sales-table">
-              <thead>
-                <tr>
-                  <th>Transação</th>
-                  <th>Produto</th>
-                  <th>Gateway</th>
-                  <th>Data</th>
-                  <th>Valor</th>
-                  <th>Status</th>
-                  <th>Atribuição</th>
-                  <th aria-label="Detalhes" />
-                </tr>
-              </thead>
-              <tbody>
+          {props.error ? (
+            <Alert className="inline-error sales-error" variant="destructive">
+              <AlertDescription>{props.error}</AlertDescription>
+              <Button onClick={props.onRetry} size="sm" variant="outline">
+                Tentar novamente
+              </Button>
+            </Alert>
+          ) : props.loading && !props.rows.length ? (
+            <div aria-live="polite" className="loading-state">
+              <RefreshCw className="spin" size={17} /> Carregando transações…
+            </div>
+          ) : props.rows.length ? (
+            <Table
+              className="data-table sales-table"
+              containerClassName="table-scroll"
+            >
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Transação</TableHead>
+                  <TableHead>Produto</TableHead>
+                  <TableHead>Gateway</TableHead>
+                  <TableHead>Data</TableHead>
+                  <TableHead>Valor</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Atribuição</TableHead>
+                  <TableHead aria-label="Detalhes" />
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {props.rows.map((sale) => (
-                  <tr key={sale.id}>
-                    <td>
+                  <TableRow key={sale.id}>
+                    <TableCell>
                       <strong className="transaction-id">{sale.id}</strong>
-                    </td>
-                    <td>
+                    </TableCell>
+                    <TableCell>
                       <div className="product-cell">
                         <span className="product-mini-icon">
                           <ShoppingBag size={14} />
                         </span>
                         <strong>{sale.product}</strong>
                       </div>
-                    </td>
-                    <td>
+                    </TableCell>
+                    <TableCell>
                       <GatewayBadge gateway={sale.gateway} />
-                    </td>
-                    <td className="date-cell">{sale.date}</td>
-                    <td
+                    </TableCell>
+                    <TableCell className="date-cell">{sale.date}</TableCell>
+                    <TableCell
                       className={
                         "numeric-cell " +
                         (sale.status === "Aprovada" ? "revenue-cell" : "")
                       }
                     >
                       {sale.amountLabel ?? currency.format(sale.amount)}
-                    </td>
-                    <td>
+                    </TableCell>
+                    <TableCell>
                       <SaleStatus status={sale.status} />
-                    </td>
-                    <td>
-                      <span
+                    </TableCell>
+                    <TableCell>
+                      <Badge
                         className={
                           "attribution-pill " +
                           (sale.matched ? "matched" : "unmatched")
                         }
+                        variant={sale.matched ? "secondary" : "outline"}
                       >
                         {sale.matched ? (
                           <>
-                            <Link2 size={12} /> {sale.campaign}
+                            <Link2 data-icon="inline-start" /> {sale.campaign}
                           </>
                         ) : (
                           <>
                             <span /> Sem atribuição
                           </>
                         )}
-                      </span>
-                    </td>
-                    <td>
-                      <button
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <Button
                         aria-label={"Abrir detalhes da transação " + sale.id}
-                        className="icon-button row-menu"
+                        className="row-menu"
                         onClick={() => props.onSelectSale(sale)}
-                        type="button"
+                        size="icon"
+                        variant="ghost"
                       >
-                        <ExternalLink size={15} />
-                      </button>
-                    </td>
-                  </tr>
+                        <ExternalLink />
+                      </Button>
+                    </TableCell>
+                  </TableRow>
                 ))}
-              </tbody>
-            </table>
+              </TableBody>
+            </Table>
+          ) : (
+            <Empty className="empty-state">
+              <EmptyHeader>
+                <EmptyMedia variant="icon">
+                  <Search />
+                </EmptyMedia>
+                <EmptyTitle>Nenhuma venda encontrada</EmptyTitle>
+                <EmptyDescription>
+                  Experimente ajustar período, filtros ou busca.
+                </EmptyDescription>
+              </EmptyHeader>
+            </Empty>
+          )}
+          <div className="table-footer">
+            <span>
+              Exibindo{" "}
+              <strong>
+                {firstRow}–{lastRow}
+              </strong>{" "}
+              de <strong>{props.total}</strong>{" "}
+              {props.demo ? "transações demonstrativas" : "transações"}
+            </span>
+            <Pagination
+              label="vendas"
+              onChange={props.setPage}
+              page={props.page}
+              pageSize={25}
+              totalItems={props.total}
+            />
           </div>
-        ) : (
-          <div className="empty-state">
-            <Search size={21} />
-            <strong>Nenhuma venda encontrada</strong>
-            <span>Experimente ajustar período, filtros ou busca.</span>
-          </div>
-        )}
-        <div className="table-footer">
-          <span>
-            Exibindo{" "}
-            <strong>
-              {firstRow}–{lastRow}
-            </strong>{" "}
-            de <strong>{props.total}</strong>{" "}
-            {props.demo ? "transações demonstrativas" : "transações"}
-          </span>
-          <Pagination
-            label="vendas"
-            onChange={props.setPage}
-            page={props.page}
-            pageSize={25}
-            totalItems={props.total}
-          />
-        </div>
-      </section>
+        </CardContent>
+      </Card>
       <div className="disclaimer">
         <Clock3 size={13} /> Receita aprovada em BRL considera apenas conversões
         disponíveis. Reembolsos e chargebacks aparecem na lista e não entram no
@@ -3821,12 +4027,13 @@ function ProviderLogo({ name }: { name: string }) {
 
 function GatewayBadge({ gateway }: { gateway: Sale["gateway"] }) {
   return (
-    <span
+    <Badge
       className={`gateway-badge ${gateway === "Hotmart" ? "hotmart-badge" : "kiwify-badge"}`}
+      variant="outline"
     >
       <i>{gateway === "Hotmart" ? "H" : "K"}</i>
       {gateway}
-    </span>
+    </Badge>
   )
 }
 
@@ -3838,10 +4045,13 @@ function SaleStatus({ status }: { status: Sale["status"] }) {
         ? "pending"
         : "reversed"
   return (
-    <span className={`sale-status ${className}`}>
+    <Badge
+      className={`sale-status ${className}`}
+      variant={className === "reversed" ? "destructive" : "secondary"}
+    >
       <i />
       {status}
-    </span>
+    </Badge>
   )
 }
 

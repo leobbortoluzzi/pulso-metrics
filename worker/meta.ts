@@ -5,6 +5,10 @@ import {
   sha256,
 } from "./secure-store"
 import type { QueueMessage } from "./messages"
+import {
+  isDateRangeWithinLimit,
+  MAX_DATE_RANGE_DAYS,
+} from "../src/lib/date-range"
 import { readMetaConfiguration } from "./settings"
 
 type JsonRecord = Record<string, unknown>
@@ -209,14 +213,10 @@ export async function queueMetaSync(
 ) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to))
     throw new Error("Informe um intervalo de datas válido.")
-  const [start, end] = [
-    new Date(`${from}T00:00:00Z`),
-    new Date(`${to}T00:00:00Z`),
-  ]
-  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || from > to)
-    throw new Error("Informe um intervalo de datas válido.")
-  if ((end.getTime() - start.getTime()) / 86_400_000 > 90)
-    throw new Error("A atualização manual aceita intervalos de até 90 dias.")
+  if (!isDateRangeWithinLimit(from, to))
+    throw new Error(
+      `A atualização manual aceita intervalos válidos de até ${MAX_DATE_RANGE_DAYS} dias.`
+    )
   if (accountIds.length < 1 || accountIds.length > 100)
     throw new Error("Selecione entre 1 e 100 contas de anúncio.")
 

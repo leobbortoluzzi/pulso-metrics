@@ -1,5 +1,9 @@
 import { Hono, type Context } from "hono"
 import { calculatePerformance } from "../src/lib/metrics"
+import {
+  isDateRangeWithinLimit,
+  MAX_DATE_RANGE_DAYS,
+} from "../src/lib/date-range"
 import { ensureDatabaseSchema } from "./database"
 import {
   completeMetaAuthorization,
@@ -503,14 +507,11 @@ app.get("/api/dashboard", async (context) => {
     return context.json({ error: "O filtro aceita até 100 contas." }, 400)
   const gateway = parseGateway(context.req.query("gateway"))
   const product = context.req.query("product")?.slice(0, 150) ?? ""
-  if (
-    (new Date(`${to}T00:00:00Z`).getTime() -
-      new Date(`${from}T00:00:00Z`).getTime()) /
-      86_400_000 >
-    90
-  ) {
+  if (!isDateRangeWithinLimit(from, to)) {
     return context.json(
-      { error: "O dashboard aceita intervalos de até 90 dias." },
+      {
+        error: `O dashboard aceita intervalos de até ${MAX_DATE_RANGE_DAYS} dias.`,
+      },
       400
     )
   }
@@ -644,14 +645,11 @@ app.get("/api/sales", async (context) => {
     .filter(Boolean)
   if (accountIds.length > 100)
     return context.json({ error: "O filtro aceita até 100 contas." }, 400)
-  if (
-    (new Date(`${to}T00:00:00Z`).getTime() -
-      new Date(`${from}T00:00:00Z`).getTime()) /
-      86_400_000 >
-    90
-  ) {
+  if (!isDateRangeWithinLimit(from, to)) {
     return context.json(
-      { error: "A lista de vendas aceita intervalos de até 90 dias." },
+      {
+        error: `A lista de vendas aceita intervalos de até ${MAX_DATE_RANGE_DAYS} dias.`,
+      },
       400
     )
   }
@@ -691,14 +689,11 @@ app.post("/api/gateways/reconcile", async (context) => {
       400
     )
   }
-  if (
-    (new Date(`${to}T00:00:00Z`).getTime() -
-      new Date(`${from}T00:00:00Z`).getTime()) /
-      86_400_000 >
-    90
-  ) {
+  if (!isDateRangeWithinLimit(from, to)) {
     return context.json(
-      { error: "A reconciliação aceita intervalos de até 90 dias." },
+      {
+        error: `A reconciliação aceita intervalos de até ${MAX_DATE_RANGE_DAYS} dias.`,
+      },
       400
     )
   }

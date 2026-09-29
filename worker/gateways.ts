@@ -9,6 +9,26 @@ type Credentials = {
   accountId?: string
 }
 type JsonRecord = Record<string, unknown>
+const KIWIFY_MAX_RANGE_DAYS = 90
+const DAY_IN_MS = 86_400_000
+
+function splitDateRange(from: string, to: string, maxDays: number) {
+  let start = Date.parse(`${from}T00:00:00.000Z`)
+  const end = Date.parse(`${to}T00:00:00.000Z`)
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start)
+    throw new Error("Período inválido para consulta à Kiwify.")
+
+  const ranges: Array<{ from: string; to: string }> = []
+  while (start <= end) {
+    const rangeEnd = Math.min(end, start + (maxDays - 1) * DAY_IN_MS)
+    ranges.push({
+      from: new Date(start).toISOString().slice(0, 10),
+      to: new Date(rangeEnd).toISOString().slice(0, 10),
+    })
+    start = rangeEnd + DAY_IN_MS
+  }
+  return ranges
+}
 
 function asRecord(value: unknown): JsonRecord {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -238,48 +258,55 @@ async function reconcileKiwify(
     "waiting_payment",
   ]
   let imported = 0
-  for (const status of statuses) {
-    for (let page = 1; page <= 100; page += 1) {
-      const url = new URL("https://public-api.kiwify.com/v1/sales")
-      url.searchParams.set("start_date", `${message.from}T00:00:00.000Z`)
-      url.searchParams.set("end_date", `${message.to}T23:59:59.999Z`)
-      url.searchParams.set("status", status)
-      url.searchParams.set("view_full_sale_details", "true")
-      url.searchParams.set("page_size", "100")
-      url.searchParams.set("page_number", String(page))
-      const response = await fetch(url, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "x-kiwify-account-id": credentials.accountId ?? "",
-          Accept: "application/json",
-        },
-      })
-      const body = await readJson(response)
-      const items = Array.isArray(body.data) ? body.data : []
-      for (const value of items) {
-        const item = asRecord(value)
-        const product = asRecord(item.product)
-        const normalized = {
-          ...item,
-          order_id: item.id,
-          order_status: item.status,
-          amount_minor: Math.round(asNumber(item.net_amount) * 100),
-          product_id: product.id,
-          product_name: product.name,
-          tracking: item.tracking,
-          created_at: item.updated_at ?? item.created_at,
+  const dateRanges = splitDateRange(
+    message.from,
+    message.to,
+    KIWIFY_MAX_RANGE_DAYS
+  )
+  for (const dateRange of dateRanges) {
+    for (const status of statuses) {
+      for (let page = 1; page <= 100; page += 1) {
+        const url = new URL("https://public-api.kiwify.com/v1/sales")
+        url.searchParams.set("start_date", `${dateRange.from}T00:00:00.000Z`)
+        url.searchParams.set("end_date", `${dateRange.to}T23:59:59.999Z`)
+        url.searchParams.set("status", status)
+        url.searchParams.set("view_full_sale_details", "true")
+        url.searchParams.set("page_size", "100")
+        url.searchParams.set("page_number", String(page))
+        const response = await fetch(url, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "x-kiwify-account-id": credentials.accountId ?? "",
+            Accept: "application/json",
+          },
+        })
+        const body = await readJson(response)
+        const items = Array.isArray(body.data) ? body.data : []
+        for (const value of items) {
+          const item = asRecord(value)
+          const product = asRecord(item.product)
+          const normalized = {
+            ...item,
+            order_id: item.id,
+            order_status: item.status,
+            amount_minor: Math.round(asNumber(item.net_amount)),
+            product_id: product.id,
+            product_name: product.name,
+            tracking: item.tracking,
+            created_at: item.updated_at ?? item.created_at,
+          }
+          const result = await ingestSale(env, "kiwify", normalized, false)
+          if (result.needsFx) pendingFx.add(`${result.currency}|${result.date}`)
+          imported += 1
         }
-        const result = await ingestSale(env, "kiwify", normalized, false)
-        if (result.needsFx) pendingFx.add(`${result.currency}|${result.date}`)
-        imported += 1
+        const pagination = asRecord(body.pagination)
+        const current = Number(pagination.page_number ?? page)
+        const pageSize = Number(pagination.page_size ?? 100)
+        const count = Number(pagination.count ?? items.length)
+        if (items.length < pageSize || current * pageSize >= count) break
+        if (page === 100)
+          throw new Error("A busca Kiwify excedeu 100 páginas para um status.")
       }
-      const pagination = asRecord(body.pagination)
-      const current = Number(pagination.page_number ?? page)
-      const pageSize = Number(pagination.page_size ?? 100)
-      const count = Number(pagination.count ?? items.length)
-      if (items.length < pageSize || current * pageSize >= count) break
-      if (page === 100)
-        throw new Error("A busca Kiwify excedeu 100 páginas para um status.")
     }
   }
   return imported
