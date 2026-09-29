@@ -2006,6 +2006,9 @@ function App() {
               setPeriod={updatePeriod}
               dateRange={dateRange}
               onDateRangeApply={applyDateRange}
+              accountFilter={accountFilter}
+              setAccountFilter={setAccountFilter}
+              accountOptions={adAccountList}
               metrics={
                 authState === "authenticated" ? liveFunnel : demoFunnelMetrics
               }
@@ -2191,6 +2194,9 @@ type FunnelPageProps = {
   setPeriod: (period: Period) => void
   dateRange: DateRange
   onDateRangeApply: (range: DateRange) => void
+  accountFilter: string
+  setAccountFilter: (account: string) => void
+  accountOptions: AdAccount[]
   metrics: FunnelMetrics | null
   demo: boolean
   loading: boolean
@@ -2317,6 +2323,23 @@ function FunnelPage(props: FunnelPageProps) {
           period={props.period}
           value={props.dateRange}
         />
+        <div className="filter-divider" />
+        <div className="select-filter">
+          <span>Conta</span>
+          <FilterSelect
+            ariaLabel="Filtrar funil por conta"
+            value={props.accountFilter}
+            onValueChange={props.setAccountFilter}
+            className="select-filter-control"
+            options={[
+              { value: "all", label: "Todas as contas" },
+              ...props.accountOptions.map((account) => ({
+                value: account.id,
+                label: account.name,
+              })),
+            ]}
+          />
+        </div>
       </div>
 
       {props.error && (
