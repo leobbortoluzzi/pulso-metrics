@@ -34,6 +34,11 @@ import {
   kiwifyWebhookIsAuthorized,
 } from "./webhooks"
 import type { QueueMessage } from "./messages"
+import {
+  querySales,
+  type SalesAttributionFilter,
+  type SalesStatusFilter,
+} from "./sales-query"
 
 export { SecretVault } from "./vault"
 
@@ -455,6 +460,19 @@ app.post("/api/meta/sync", async (context) => {
   }
 })
 
+app.get("/api/sync/recent", async (context) => {
+  const requestedLimit = Number(context.req.query("limit") ?? 5)
+  const limit = Number.isFinite(requestedLimit)
+    ? Math.min(10, Math.max(1, Math.floor(requestedLimit)))
+    : 5
+  const result = await context.env.DB.prepare(
+    "SELECT id, type, status, date_from, date_to, requested_count, completed_count, error_message, created_at, completed_at FROM sync_runs ORDER BY created_at DESC LIMIT ?"
+  )
+    .bind(limit)
+    .all()
+  return context.json({ runs: result.results })
+})
+
 app.get("/api/sync/:id", async (context) => {
   const sync = await context.env.DB.prepare(
     "SELECT id, type, status, date_from, date_to, requested_count, completed_count, error_message, created_at, started_at, completed_at FROM sync_runs WHERE id = ?"
@@ -606,6 +624,20 @@ app.get("/api/sales", async (context) => {
     return context.json({ error: "Informe datas válidas em from e to." }, 400)
   const provider = parseGateway(context.req.query("gateway"))
   const product = context.req.query("product")?.slice(0, 150) ?? ""
+  const requestedStatus = context.req.query("status") ?? "all"
+  const validStatuses = new Set([
+    "all",
+    "approved",
+    "refunded",
+    "chargeback",
+    "pending",
+  ])
+  if (!validStatuses.has(requestedStatus))
+    return context.json({ error: "Status de venda inválido." }, 400)
+  const attribution = context.req.query("attribution") ?? "all"
+  if (!new Set(["all", "matched", "unmatched"]).has(attribution))
+    return context.json({ error: "Filtro de atribuição inválido." }, 400)
+  const query = context.req.query("q")?.trim().slice(0, 100) ?? ""
   const accountQuery = context.req.queries("accountIds") ?? []
   const accountIds = accountQuery
     .flatMap((entry) => entry.split(","))
@@ -623,41 +655,28 @@ app.get("/api/sales", async (context) => {
       400
     )
   }
-  const limit = Math.max(
-    1,
-    Math.min(Number(context.req.query("limit")) || 50, 100)
+  const rawLimit = Number(context.req.query("limit") ?? 50)
+  const rawOffset = Number(context.req.query("offset") ?? 0)
+  const limit = Number.isFinite(rawLimit)
+    ? Math.min(100, Math.max(1, Math.floor(rawLimit)))
+    : 50
+  const offset = Number.isFinite(rawOffset)
+    ? Math.max(0, Math.floor(rawOffset))
+    : 0
+  return context.json(
+    await querySales(context.env.DB, {
+      from,
+      to,
+      accountIds,
+      provider,
+      product,
+      status: requestedStatus as SalesStatusFilter,
+      attribution: attribution as SalesAttributionFilter,
+      query,
+      limit,
+      offset,
+    })
   )
-  const offset = Math.max(0, Number(context.req.query("offset")) || 0)
-  const clauses = ["attribution_date BETWEEN ? AND ?"]
-  const values: Array<string | number> = [from, to]
-  if (accountIds.length) {
-    clauses.push(`account_id IN (${accountIds.map(() => "?").join(",")})`)
-    values.push(...accountIds)
-  }
-  if (provider) {
-    clauses.push("provider = ?")
-    values.push(provider)
-  }
-  if (product) {
-    clauses.push("product_name = ?")
-    values.push(product)
-  }
-  const result = await context.env.DB.prepare(
-    `SELECT provider, external_id, status, product_id, product_name, currency, amount_minor, amount_brl, occurred_at, attribution_date, campaign_id, adset_id, ad_id, utm_source, utm_medium, utm_campaign, utm_content, utm_term, (SELECT campaign_name FROM ad_metrics m WHERE m.campaign_id = sales.campaign_id ORDER BY m.date DESC LIMIT 1) AS campaign_name FROM sales WHERE ${clauses.join(" AND ")} ORDER BY occurred_at DESC LIMIT ? OFFSET ?`
-  )
-    .bind(...values, limit, offset)
-    .all()
-  const count = await context.env.DB.prepare(
-    `SELECT COUNT(*) AS total FROM sales WHERE ${clauses.join(" AND ")}`
-  )
-    .bind(...values)
-    .first<{ total: number }>()
-  return context.json({
-    sales: result.results,
-    total: count?.total ?? 0,
-    limit,
-    offset,
-  })
 })
 
 app.post("/api/gateways/reconcile", async (context) => {

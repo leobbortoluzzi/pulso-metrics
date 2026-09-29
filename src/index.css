@@ -2,25 +2,33 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 @import "@fontsource-variable/inter";
-@import "@fontsource-variable/space-grotesk";
 
 @custom-variant dark (&:is(.dark *));
 
 :root {
-  font-family: "Inter Variable", Inter, sans-serif;
-  color: #20372f;
-  background: #f4f7f4;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter Variable", Inter, sans-serif;
+  color: #1d1d1f;
+  background: #f5f5f7;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
-  --font-heading: "Space Grotesk Variable", "Inter Variable", sans-serif;
-  --pine: #153d32;
-  --pine-dark: #10352a;
-  --moss: #527b67;
-  --lime: #c8e65a;
-  --muted: #83938b;
-  --line: #e8ede8;
+  --font-heading: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Inter Variable", Inter, sans-serif;
+  --primary: #0066cc;
+  --primary-focus: #0071e3;
+  --primary-on-dark: #2997ff;
+  --ink: #1d1d1f;
+  --muted: #7a7a7a;
+  --line: #e0e0e0;
   --surface: #fff;
-  --canvas: #f4f7f4;
+  --canvas: #f5f5f7;
+  --parchment: #f5f5f7;
+  --surface-dark: #272729;
+  --radius-utility: 8px;
+  --radius-card: 18px;
+  --radius-pill: 9999px;
+  --pine: #1d1d1f;
+  --pine-dark: #000;
+  --moss: #0066cc;
+  --lime: #0066cc;
 }
 
 * {
@@ -43,12 +51,12 @@ button {
 button:focus-visible,
 select:focus-visible,
 input:focus-visible {
-  outline: 3px solid #aacb79;
+  outline: 3px solid #0071e3;
   outline-offset: 2px;
 }
 ::selection {
-  background: #d8e8a6;
-  color: #163c31;
+  background: #d9eaff;
+  color: #1d1d1f;
 }
 
 .app-shell {
@@ -529,11 +537,10 @@ p {
   cursor: pointer;
   transition:
     transform 0.15s,
-    box-shadow 0.15s,
     background 0.15s;
 }
 .button:hover {
-  transform: translateY(-1px);
+  transform: none;
 }
 .button:disabled {
   opacity: 0.7;
@@ -1210,7 +1217,7 @@ p {
 
 .campaigns-panel {
   margin-top: 12px;
-  overflow: hidden;
+  overflow: visible;
 }
 .campaign-header {
   min-height: 67px;
@@ -2810,5 +2817,809 @@ p {
   }
   .sales-summary-card > strong {
     font-size: 18px;
+  }
+}
+
+/* Pulso dashboard tokens adapted from DESIGN.md */
+:root {
+  font-size: 15px;
+  line-height: 1.47;
+  color: var(--ink);
+  background: var(--canvas);
+}
+
+body,
+.app-shell,
+.main-column,
+.page-content {
+  background: var(--canvas);
+  color: var(--ink);
+}
+
+.sidebar,
+.topbar,
+.panel,
+.metric-card,
+.sales-summary-card,
+.integration-card,
+.workspace-config-card,
+.login-card,
+.setup-panel {
+  border-color: var(--line);
+  background: var(--surface);
+  box-shadow: none;
+}
+
+.sidebar {
+  border-right-color: #f0f0f0;
+}
+
+.brand-lockup,
+.workspace-copy strong,
+.page-heading h1,
+.panel h2,
+.sales-summary-card > strong,
+.campaign-copy strong,
+.profile-copy strong {
+  color: var(--ink);
+  font-family: var(--font-heading);
+  font-weight: 600;
+}
+
+.brand-mark {
+  border-radius: var(--radius-utility);
+  background: var(--primary);
+  color: #fff;
+}
+
+.brand-period,
+.heading-period,
+.eyebrow-line,
+.panel-link,
+.footer-muted,
+.profile-button > svg,
+.source-name {
+  color: var(--primary);
+}
+
+.sidebar .workspace-switcher {
+  border-color: var(--line);
+  border-radius: var(--radius-card);
+  background: var(--parchment);
+}
+
+.nav-item,
+.account-nav-item {
+  min-height: 44px;
+  border-radius: var(--radius-utility);
+}
+
+.nav-item.active {
+  background: #eef6ff;
+  color: var(--primary);
+}
+.nav-item.active:hover {
+  background: #eaf3ff;
+  color: var(--primary);
+}
+
+.nav-item.active::before {
+  background: var(--primary);
+}
+
+.nav-item:hover,
+.account-nav-item:hover,
+.account-nav-item.selected,
+.nav-caption button:hover {
+  background: #f5f5f7;
+  color: var(--ink);
+}
+
+.nav-count,
+.filter-count,
+.nav-dot,
+.account-status {
+  background: var(--primary);
+  color: #fff;
+}
+
+.nav-dot-pending {
+  background: #d2d2d7;
+}
+
+.account-avatar,
+.workspace-avatar,
+.metric-icon,
+.help-icon,
+.integration-overview-icon,
+.product-mini-icon {
+  border-radius: var(--radius-utility);
+}
+
+.page-heading h1 {
+  font-size: 40px;
+  line-height: 1.1;
+  letter-spacing: -0.5px;
+}
+
+.page-heading p,
+.panel p {
+  color: #424245;
+  font-size: 15px;
+  line-height: 1.47;
+}
+
+.panel,
+.metric-card,
+.sales-summary-card,
+.integration-card,
+.workspace-config-card {
+  border-radius: var(--radius-card);
+}
+
+.panel-header,
+.campaign-header,
+.sales-table-heading {
+  border-color: #f0f0f0;
+}
+
+.button,
+.button-primary,
+.button-secondary,
+.heading-actions .button {
+  min-height: 44px;
+  border-radius: var(--radius-pill);
+  box-shadow: none;
+  font-family: var(--font-heading);
+  font-weight: 400;
+}
+
+.button-primary,
+.button-primary:hover {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: #fff;
+}
+
+.button-secondary,
+.button-secondary:hover {
+  border-color: var(--line);
+  background: var(--surface);
+  color: var(--primary);
+}
+
+.nav-item,
+.account-nav-item,
+.button,
+.icon-button,
+.filter-more,
+.date-range-button,
+.period-switch > button,
+.chart-switch > button,
+.level-switch > button,
+.profile-button,
+.help-card,
+.row-menu {
+  transition:
+    background-color 150ms ease,
+    color 150ms ease,
+    transform 150ms ease;
+}
+
+button:active:not(:disabled) {
+  transform: scale(0.95);
+}
+
+button:focus-visible,
+select:focus-visible,
+input:focus-visible {
+  outline: 3px solid var(--primary-focus);
+  outline-offset: 2px;
+  box-shadow: none;
+}
+
+.icon-button,
+.row-menu,
+.notification-button {
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  min-height: 44px;
+  border-radius: var(--radius-pill);
+}
+
+.filter-bar,
+.sales-filter-row,
+.table-tools {
+  border-color: var(--line);
+}
+
+.period-switch > button {
+  min-height: 44px;
+  border-radius: var(--radius-pill);
+}
+
+.period-switch > button.selected,
+.chart-switch > button.active,
+.level-switch > button.active {
+  background: #eef6ff;
+  color: var(--primary);
+}
+
+.date-range-button {
+  min-height: 44px;
+  max-width: 100%;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-pill);
+  background: #fff;
+  color: var(--primary);
+  gap: 7px;
+  padding: 0 13px;
+}
+
+.date-range-button span {
+  white-space: nowrap;
+}
+
+.filter-more {
+  min-height: 44px;
+  border-radius: var(--radius-pill);
+  background: #fff;
+  color: var(--primary);
+}
+
+.metric-icon.sage,
+.metric-icon.lime,
+.metric-icon.lavender,
+.metric-icon.coral,
+.notice-spark,
+.help-icon {
+  background: #eef6ff;
+  color: var(--primary);
+}
+
+.metric-progress > span,
+.integration-progress i {
+  background: var(--primary);
+}
+
+.chart-line-revenue,
+.chart-line-spend {
+  stroke: var(--primary);
+}
+
+.chart-point-revenue,
+.chart-point-spend {
+  fill: var(--primary);
+  stroke: #fff;
+}
+
+.legend-lime,
+.legend-pine {
+  background: var(--primary);
+}
+
+.chart-gridline,
+.attribution-divider,
+.table-footer,
+.app-footer {
+  border-color: var(--line);
+}
+
+.roas-good,
+.roas-mid,
+.sale-status.approved,
+.sale-status.pending,
+.sale-status.reversed,
+.source-status {
+  color: var(--ink);
+}
+
+.metric-card,
+.panel,
+.integration-card,
+.workspace-config-card,
+.help-guide-dialog,
+.sale-details-panel,
+.popover-panel {
+  box-shadow: none;
+}
+
+.account-status,
+.period-switch .selected,
+.nav-item.active,
+.table-search:focus-within,
+.level-switch button.active,
+.toast-message,
+.auth-loading .brand-mark,
+.login-card,
+.credentials-modal,
+.sidebar.sidebar-open,
+.workspace-config-card input:focus {
+  box-shadow: none;
+}
+
+.auth-screen {
+  background: var(--parchment);
+}
+
+.popover-root {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+
+.popover-panel {
+  position: absolute;
+  z-index: 60;
+  top: calc(100% + 8px);
+  right: 0;
+  min-width: 220px;
+  max-width: min(360px, calc(100vw - 24px));
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+  background: #fff;
+  color: var(--ink);
+}
+
+.popover-actions,
+.column-menu-content,
+.activity-feed,
+.date-range-form {
+  display: grid;
+  gap: 10px;
+}
+
+.popover-actions > strong,
+.column-menu-content > strong,
+.popover-heading > strong,
+.date-range-form > strong,
+.attribution-help-copy > strong {
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.popover-actions > button {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 44px;
+  border: 0;
+  border-radius: var(--radius-utility);
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.popover-actions > button:hover {
+  background: var(--parchment);
+  color: var(--primary);
+}
+
+.popover-select-label,
+.date-range-form label,
+.column-menu-content label {
+  display: grid;
+  gap: 5px;
+  color: #424245;
+  font-size: 13px;
+}
+
+.date-range-form input,
+.popover-actions select {
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-utility);
+  background: #fff;
+  color: var(--ink);
+}
+
+.date-range-panel {
+  width: 300px;
+}
+
+.date-range-form p {
+  margin: 0;
+  font-size: 12px;
+}
+
+.range-hint {
+  color: var(--muted);
+}
+
+.range-error,
+.activity-error {
+  color: #a32323 !important;
+}
+
+.advanced-filter-menu {
+  width: 260px;
+}
+
+.profile-menu {
+  top: auto;
+  right: auto;
+  bottom: calc(100% + 8px);
+  left: 0;
+  width: 240px;
+}
+
+.activity-menu {
+  width: 350px;
+}
+
+.popover-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 2px 7px;
+  border-bottom: 1px solid var(--line);
+}
+
+.popover-heading > span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.activity-item {
+  display: flex;
+  gap: 10px;
+  padding: 10px 0;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.activity-item:last-child {
+  border-bottom: 0;
+}
+
+.activity-state {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  margin-top: 5px;
+  border-radius: var(--radius-pill);
+  background: #a1a1a6;
+}
+
+.activity-state.completed {
+  background: var(--primary);
+}
+
+.activity-state.queued,
+.activity-state.running {
+  background: #d08a00;
+}
+
+.activity-state.partial,
+.activity-state.failed {
+  background: #c23838;
+}
+
+.activity-item > div {
+  display: grid;
+  gap: 2px;
+}
+
+.activity-item strong {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.activity-item span,
+.activity-item small,
+.popover-empty {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.popover-empty {
+  margin: 5px 0 0;
+}
+
+.column-menu {
+  top: auto;
+  bottom: calc(100% + 8px);
+  width: 250px;
+}
+
+.column-menu-content label {
+  display: flex;
+  align-items: center;
+  min-height: 36px;
+  gap: 8px;
+}
+
+.selection-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 48px;
+  padding: 6px 14px;
+  border-bottom: 1px solid var(--line);
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.selection-toolbar > span {
+  margin-right: auto;
+}
+
+.selection-toolbar > button {
+  display: inline-flex;
+  align-items: center;
+  min-height: 40px;
+  gap: 6px;
+  border: 0;
+  background: transparent;
+  color: var(--primary);
+  cursor: pointer;
+}
+
+.inline-error,
+.loading-note,
+.loading-state {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-utility);
+  background: #fff;
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.inline-error {
+  justify-content: space-between;
+  border-color: #e8caca;
+  background: #fff8f8;
+}
+
+.inline-error button {
+  min-height: 40px;
+  border: 0;
+  background: transparent;
+  color: var(--primary);
+  cursor: pointer;
+}
+
+.sales-error {
+  margin: 12px;
+}
+
+.loading-note,
+.loading-state {
+  color: var(--muted);
+}
+
+.loading-state {
+  justify-content: center;
+  min-height: 120px;
+}
+
+.account-list-empty {
+  padding: 8px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.help-card {
+  width: 100%;
+  min-height: 64px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+  background: var(--parchment);
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.profile-button {
+  min-height: 54px;
+  border-radius: var(--radius-utility);
+  color: var(--ink);
+}
+
+.sale-details-panel,
+.help-guide-dialog {
+  width: min(480px, calc(100vw - 32px));
+  max-height: min(90vh, 720px);
+  overflow: auto;
+  padding: 24px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+  background: #fff;
+  color: var(--ink);
+}
+
+.sale-details-heading,
+.help-guide-heading,
+.help-guide-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.sale-details-heading h2,
+.help-guide-dialog h2 {
+  margin: 4px 0 0;
+  color: var(--ink);
+  font-family: var(--font-heading);
+  font-size: 24px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.sale-details-list {
+  display: grid;
+  gap: 0;
+  margin: 20px 0 12px;
+}
+
+.sale-details-list > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 11px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.sale-details-list dt {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.sale-details-list dd {
+  margin: 0;
+  color: var(--ink);
+  font-size: 13px;
+  text-align: right;
+}
+
+.sale-details-privacy {
+  margin: 14px 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.help-guide-dialog .panel-kicker {
+  margin-top: 22px;
+}
+
+.help-guide-steps {
+  display: grid;
+  gap: 14px;
+  padding-left: 23px;
+  margin: 22px 0;
+}
+
+.help-guide-steps li {
+  padding-left: 5px;
+}
+
+.help-guide-steps strong,
+.help-guide-steps span {
+  display: block;
+}
+
+.help-guide-steps strong {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.help-guide-steps span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.help-guide-actions {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.help-guide-actions .button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.pagination {
+  gap: 8px;
+}
+
+.pagination .current-page {
+  min-width: 62px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.table-footer {
+  min-height: 58px;
+}
+
+.data-table th {
+  color: #424245;
+}
+
+.status-dot.status-live,
+.source-status i,
+.status-live {
+  background: var(--primary);
+}
+
+.demo-notice {
+  border-color: #cfe2f7;
+  background: #f4f9ff;
+}
+
+.demo-notice strong {
+  color: var(--ink);
+}
+
+.demo-notice button {
+  color: var(--primary);
+}
+
+@media (max-width: 760px) {
+  .page-heading h1 {
+    font-size: 34px;
+  }
+
+  .popover-panel.activity-menu {
+    position: fixed;
+    top: 62px;
+    right: 12px;
+    left: 12px;
+    width: auto;
+    max-width: none;
+  }
+
+  .popover-panel.profile-menu {
+    position: fixed;
+    top: auto;
+    right: 14px;
+    bottom: 82px;
+    left: 14px;
+    width: auto;
+    max-width: none;
+  }
+
+  .date-range-panel {
+    right: auto;
+    left: 0;
+    width: min(300px, calc(100vw - 32px));
+  }
+
+  .selection-toolbar {
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 4px 10px;
+    padding: 8px 12px;
+  }
+
+  .selection-toolbar > span {
+    width: 100%;
+  }
+
+  .sales-filter-row .date-range-button {
+    max-width: 210px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
   }
 }

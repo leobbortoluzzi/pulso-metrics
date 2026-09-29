@@ -1,23 +1,23 @@
 import {
   Activity,
   ArrowDownRight,
-  ArrowLeft,
   ArrowRight,
   ArrowUpRight,
   BadgeCheck,
   BarChart3,
   Bell,
-  CalendarDays,
   Check,
   ChevronDown,
   ChevronRight,
   CircleHelp,
   Clock3,
+  Copy,
   Download,
   ExternalLink,
   Filter,
   LayoutDashboard,
   Link2,
+  LogOut,
   Menu,
   MoreHorizontal,
   Plus,
@@ -31,7 +31,24 @@ import {
   Zap,
 } from "lucide-react"
 import { useEffect, useMemo, useState, type FormEvent } from "react"
+import { HelpGuide } from "@/components/dashboard/help-guide"
+import { DateRangeControl } from "@/components/dashboard/date-range-control"
+import {
+  dateRangeForDays,
+  daysBetween,
+  formatRange,
+  type DateRange,
+} from "@/components/dashboard/date-range-utils"
+import { Pagination } from "@/components/dashboard/pagination"
+import { Popover } from "@/components/dashboard/popover"
+import { SaleDetails } from "@/components/dashboard/sale-details"
 import { currencyMinorUnit } from "@/lib/metrics"
+import {
+  summarizeSales,
+  type SaleAttributionFilter,
+  type SaleStatusFilter,
+  type SalesSummary,
+} from "@/lib/sales"
 import {
   accounts,
   campaigns,
@@ -43,9 +60,24 @@ import {
 } from "@/lib/dashboard-data"
 
 type Page = "overview" | "sales" | "integrations"
-type Period = 7 | 14 | 30
+type Period = number
 type Level = "Campanhas" | "Conjuntos" | "Anúncios"
 type Gateway = "Todos os gateways" | "Hotmart" | "Kiwify"
+type CampaignPerformanceFilter = "all" | "with-sales" | "without-sales"
+type CampaignColumn = "account" | "spend" | "sales" | "revenue" | "roas" | "ctr"
+
+type SyncActivity = {
+  id: string
+  type: "meta" | "gateways"
+  status: "queued" | "running" | "completed" | "partial" | "failed"
+  date_from: string
+  date_to: string
+  requested_count: number
+  completed_count: number
+  error_message: string | null
+  created_at: string
+  completed_at: string | null
+}
 
 const currency = new Intl.NumberFormat("pt-BR", {
   style: "currency",
@@ -62,6 +94,32 @@ const compactCurrency = new Intl.NumberFormat("pt-BR", {
 
 const numberFormat = new Intl.NumberFormat("pt-BR")
 const accountColors = ["#dcece4", "#eee7d7", "#e6e2f0", "#e1e9ee", "#f1e4dc"]
+const campaignColumnOptions: Array<[CampaignColumn, string]> = [
+  ["account", "Conta de anúncio"],
+  ["spend", "Investimento"],
+  ["sales", "Vendas"],
+  ["revenue", "Receita líquida"],
+  ["roas", "ROAS"],
+  ["ctr", "CTR"],
+]
+const campaignCsvHeaders = [
+  "id",
+  "campanha",
+  "produto",
+  "gateway",
+  "investimento_brl",
+  "receita_brl",
+  "vendas",
+]
+const salesCsvHeaders = [
+  "transacao",
+  "data",
+  "produto",
+  "gateway",
+  "valor_brl",
+  "status",
+  "campanha",
+]
 
 function App() {
   const [authState, setAuthState] = useState<
@@ -69,12 +127,36 @@ function App() {
   >("checking")
   const [page, setPage] = useState<Page>("overview")
   const [period, setPeriod] = useState<Period>(14)
+  const [dateRange, setDateRange] = useState<DateRange>(() =>
+    dateRangeForDays(14)
+  )
   const [accountFilter, setAccountFilter] = useState("all")
   const [productFilter, setProductFilter] = useState("Todos os produtos")
   const [gatewayFilter, setGatewayFilter] =
     useState<Gateway>("Todos os gateways")
   const [level, setLevel] = useState<Level>("Campanhas")
   const [query, setQuery] = useState("")
+  const [campaignPerformanceFilter, setCampaignPerformanceFilter] =
+    useState<CampaignPerformanceFilter>("all")
+  const [saleStatusFilter, setSaleStatusFilter] =
+    useState<SaleStatusFilter>("all")
+  const [saleAttributionFilter, setSaleAttributionFilter] =
+    useState<SaleAttributionFilter>("all")
+  const [campaignPage, setCampaignPage] = useState(1)
+  const [salesPage, setSalesPage] = useState(1)
+  const [selectedCampaignIds, setSelectedCampaignIds] = useState<string[]>([])
+  const [campaignColumns, setCampaignColumns] = useState(readCampaignColumns)
+  const [selectedSale, setSelectedSale] = useState<Sale | null>(null)
+  const [helpOpen, setHelpOpen] = useState(false)
+  const [recentActivity, setRecentActivity] = useState<SyncActivity[]>([])
+  const [liveSalesTotal, setLiveSalesTotal] = useState(0)
+  const [liveSalesSummary, setLiveSalesSummary] = useState<SalesSummary | null>(
+    null
+  )
+  const [salesLoading, setSalesLoading] = useState(false)
+  const [salesError, setSalesError] = useState("")
+  const [dashboardLoading, setDashboardLoading] = useState(false)
+  const [dashboardError, setDashboardError] = useState("")
   const [chartMode, setChartMode] = useState<"Receita" | "Investimento">(
     "Receita"
   )
@@ -110,29 +192,109 @@ function App() {
   const [productOptions, setProductOptions] = useState(uniqueProducts)
   const [activeSyncId, setActiveSyncId] = useState("")
   const [dataRefresh, setDataRefresh] = useState(0)
+  const rangeDays = daysBetween(dateRange)
+
+  function resetResultPages() {
+    setCampaignPage(1)
+    setSalesPage(1)
+    setSelectedCampaignIds([])
+  }
+
+  function updateAccountFilter(value: string) {
+    setAccountFilter(value)
+    resetResultPages()
+  }
+
+  function updateProductFilter(value: string) {
+    setProductFilter(value)
+    resetResultPages()
+  }
+
+  function updateGatewayFilter(value: Gateway) {
+    setGatewayFilter(value)
+    resetResultPages()
+  }
+
+  function updateLevel(value: Level) {
+    setLevel(value)
+    resetResultPages()
+  }
+
+  function updateQuery(value: string) {
+    setQuery(value)
+    resetResultPages()
+  }
+
+  function updateCampaignPerformanceFilter(value: CampaignPerformanceFilter) {
+    setCampaignPerformanceFilter(value)
+    resetResultPages()
+  }
+
+  function updateSaleStatusFilter(value: SaleStatusFilter) {
+    setSaleStatusFilter(value)
+    resetResultPages()
+  }
+
+  function updateSaleAttributionFilter(value: SaleAttributionFilter) {
+    setSaleAttributionFilter(value)
+    resetResultPages()
+  }
 
   const visibleCampaigns = useMemo(() => {
     const normalizedQuery = query.trim().toLocaleLowerCase("pt-BR")
-    return (liveCampaigns ?? campaigns).filter((campaign) => {
+    const campaignSource =
+      authState === "authenticated" ? (liveCampaigns ?? []) : campaigns
+    return campaignSource.filter((campaign) => {
       const accountMatches =
         accountFilter === "all" || campaign.accountId === accountFilter
       const productMatches =
-        liveCampaigns !== null ||
+        authState === "authenticated" ||
         productFilter === "Todos os produtos" ||
         campaign.product === productFilter
       const gatewayMatches =
-        liveCampaigns !== null ||
+        authState === "authenticated" ||
         gatewayFilter === "Todos os gateways" ||
         campaign.gateway === gatewayFilter
       const queryMatches =
         !normalizedQuery ||
         campaign.name.toLocaleLowerCase("pt-BR").includes(normalizedQuery)
-      return accountMatches && productMatches && gatewayMatches && queryMatches
+      const performanceMatches =
+        campaignPerformanceFilter === "all" ||
+        (campaignPerformanceFilter === "with-sales" && campaign.sales > 0) ||
+        (campaignPerformanceFilter === "without-sales" && campaign.sales === 0)
+      return (
+        accountMatches &&
+        productMatches &&
+        gatewayMatches &&
+        queryMatches &&
+        performanceMatches
+      )
     })
-  }, [accountFilter, gatewayFilter, liveCampaigns, productFilter, query])
+  }, [
+    accountFilter,
+    authState,
+    campaignPerformanceFilter,
+    gatewayFilter,
+    liveCampaigns,
+    productFilter,
+    query,
+  ])
 
-  const scale = period / 14
+  const scale = rangeDays / 14
   const totals = useMemo(() => {
+    if (authState === "authenticated" && !liveSummary) {
+      return {
+        spend: 0,
+        revenue: 0,
+        orders: 0,
+        clicks: 0,
+        impressions: 0,
+        matchRate: 0,
+        profit: 0,
+        roas: null,
+        roi: null,
+      }
+    }
     if (liveSummary) {
       const totalCampaignRevenue =
         liveCampaigns?.reduce((sum, campaign) => sum + campaign.revenue, 0) ?? 0
@@ -193,29 +355,75 @@ function App() {
       roas: spend > 0 ? revenue / spend : null,
       roi: spend > 0 ? (revenue - spend) / spend : null,
     }
-  }, [liveCampaigns, liveSummary, scale, visibleCampaigns])
+  }, [authState, liveCampaigns, liveSummary, scale, visibleCampaigns])
 
-  const filteredSales = useMemo(() => {
+  const demoFilteredSales = useMemo(() => {
     const normalizedQuery = query.trim().toLocaleLowerCase("pt-BR")
-    return (liveSales ?? sales).filter((sale) => {
+    return sales.filter((sale) => {
       const gatewayMatches =
         gatewayFilter === "Todos os gateways" || sale.gateway === gatewayFilter
       const productMatches =
         productFilter === "Todos os produtos" || sale.product === productFilter
+      const accountMatches =
+        accountFilter === "all" || sale.accountId === accountFilter
       const queryMatches =
         !normalizedQuery ||
         `${sale.id} ${sale.product} ${sale.campaign}`
           .toLocaleLowerCase("pt-BR")
           .includes(normalizedQuery)
-      return gatewayMatches && productMatches && queryMatches
+      const statusMatches =
+        saleStatusFilter === "all" ||
+        (saleStatusFilter === "approved" && sale.status === "Aprovada") ||
+        (saleStatusFilter === "refunded" && sale.status === "Reembolsada") ||
+        (saleStatusFilter === "chargeback" && sale.status === "Chargeback") ||
+        (saleStatusFilter === "pending" && sale.status === "Aguardando")
+      const attributionMatches =
+        saleAttributionFilter === "all" ||
+        (saleAttributionFilter === "matched" && sale.matched) ||
+        (saleAttributionFilter === "unmatched" && !sale.matched)
+      return (
+        gatewayMatches &&
+        productMatches &&
+        accountMatches &&
+        queryMatches &&
+        statusMatches &&
+        attributionMatches
+      )
     })
-  }, [gatewayFilter, liveSales, productFilter, query])
+  }, [
+    accountFilter,
+    gatewayFilter,
+    productFilter,
+    query,
+    saleAttributionFilter,
+    saleStatusFilter,
+  ])
+
+  const displayedSales =
+    authState === "authenticated"
+      ? (liveSales ?? [])
+      : demoFilteredSales.slice((salesPage - 1) * 25, salesPage * 25)
+  const salesTotal =
+    authState === "authenticated" ? liveSalesTotal : demoFilteredSales.length
+  const demoSalesSummary = useMemo(
+    () => summarizeSales(demoFilteredSales),
+    [demoFilteredSales]
+  )
+  const salesSummary =
+    authState === "authenticated" ? liveSalesSummary : demoSalesSummary
 
   useEffect(() => {
     if (!toast) return
     const timer = window.setTimeout(() => setToast(""), 3600)
     return () => window.clearTimeout(timer)
   }, [toast])
+
+  useEffect(() => {
+    window.localStorage.setItem(
+      "pulso:campaign-columns",
+      JSON.stringify(campaignColumns)
+    )
+  }, [campaignColumns])
 
   useEffect(() => {
     let cancelled = false
@@ -263,8 +471,8 @@ function App() {
     if (authState !== "authenticated") return
 
     const controller = new AbortController()
-    const from = dateForDaysAgo(period)
-    const to = dateForDaysAgo(1)
+    const from = dateRange.from
+    const to = dateRange.to
     const dashboardParams = new URLSearchParams({
       from,
       to,
@@ -281,20 +489,14 @@ function App() {
       dashboardParams.set("gateway", gatewayFilter.toLowerCase())
     if (productFilter !== "Todos os produtos")
       dashboardParams.set("product", productFilter)
-    const salesParams = new URLSearchParams({ from, to, limit: "100" })
-    if (accountFilter !== "all") salesParams.set("accountIds", accountFilter)
-    if (gatewayFilter !== "Todos os gateways")
-      salesParams.set("gateway", gatewayFilter.toLowerCase())
-    if (productFilter !== "Todos os produtos")
-      salesParams.set("product", productFilter)
-
     async function loadLiveData() {
+      setDashboardLoading(true)
+      setDashboardError("")
       try {
         const [
           dashboardResponse,
           accountResponse,
           productsResponse,
-          salesResponse,
           integrationsResponse,
         ] = await Promise.all([
           fetch(`/api/dashboard?${dashboardParams}`, {
@@ -302,7 +504,6 @@ function App() {
           }),
           fetch("/api/meta/accounts", { signal: controller.signal }),
           fetch("/api/products", { signal: controller.signal }),
-          fetch(`/api/sales?${salesParams}`, { signal: controller.signal }),
           fetch("/api/integrations", { signal: controller.signal }),
         ])
         if (controller.signal.aborted) return
@@ -374,7 +575,17 @@ function App() {
                 revenue: item.revenue,
               })) ?? []
             )
+          } else {
+            setLiveCampaigns([])
+            setLiveSummary(null)
           }
+        } else {
+          const result = (await dashboardResponse.json().catch(() => ({}))) as {
+            error?: string
+          }
+          setDashboardError(
+            result.error || "Não foi possível carregar os dados do dashboard."
+          )
         }
         if (accountResponse.ok) {
           const result = (await accountResponse.json()) as {
@@ -406,57 +617,6 @@ function App() {
           }
           setProductOptions(result.products ?? [])
         }
-        if (salesResponse.ok) {
-          const result = (await salesResponse.json()) as {
-            sales?: Array<Record<string, unknown>>
-          }
-          const liveRows = (result.sales ?? []).map((row): Sale => {
-            const currencyCode =
-              typeof row.currency === "string" ? row.currency : "BRL"
-            const nativeAmount =
-              Number(row.amount_minor ?? 0) /
-              10 ** currencyMinorUnit(currencyCode)
-            const convertedAmount =
-              typeof row.amount_brl === "number" ? row.amount_brl : null
-            const status =
-              row.status === "approved"
-                ? "Aprovada"
-                : row.status === "refunded"
-                  ? "Reembolsada"
-                  : row.status === "chargeback"
-                    ? "Chargeback"
-                    : "Aguardando"
-            const date =
-              typeof row.occurred_at === "string"
-                ? new Date(row.occurred_at).toLocaleString("pt-BR", {
-                    day: "2-digit",
-                    month: "2-digit",
-                    hour: "2-digit",
-                    minute: "2-digit",
-                  })
-                : "—"
-            return {
-              id: String(row.external_id ?? ""),
-              date,
-              product: String(row.product_name ?? "Produto não identificado"),
-              buyer: "—",
-              gateway: row.provider === "kiwify" ? "Kiwify" : "Hotmart",
-              amount: convertedAmount ?? 0,
-              amountLabel:
-                new Intl.NumberFormat("pt-BR", {
-                  style: "currency",
-                  currency: convertedAmount === null ? currencyCode : "BRL",
-                }).format(convertedAmount ?? nativeAmount) +
-                (convertedAmount === null ? " · aguardando PTAX" : ""),
-              status,
-              campaign: String(
-                row.campaign_name ?? row.campaign_id ?? "Sem atribuição"
-              ),
-              matched: Boolean(row.campaign_id || row.adset_id || row.ad_id),
-            }
-          })
-          setLiveSales(liveRows)
-        }
         if (integrationsResponse.ok) {
           const result = (await integrationsResponse.json()) as {
             integrations?: Array<{
@@ -477,8 +637,16 @@ function App() {
           setIntegrationStatus(status)
         }
       } catch (error) {
-        if (!controller.signal.aborted)
+        if (!controller.signal.aborted) {
+          setDashboardError(
+            error instanceof Error
+              ? error.message
+              : "Não foi possível carregar o dashboard."
+          )
           console.error("dashboard_load_failed", error)
+        }
+      } finally {
+        if (!controller.signal.aborted) setDashboardLoading(false)
       }
     }
 
@@ -488,11 +656,155 @@ function App() {
     accountFilter,
     authState,
     dataRefresh,
+    dateRange.from,
+    dateRange.to,
     gatewayFilter,
     level,
-    period,
     productFilter,
   ])
+
+  useEffect(() => {
+    if (authState !== "authenticated") return
+    const controller = new AbortController()
+    const params = new URLSearchParams({
+      from: dateRange.from,
+      to: dateRange.to,
+      limit: "25",
+      offset: String((salesPage - 1) * 25),
+    })
+    if (accountFilter !== "all") params.set("accountIds", accountFilter)
+    if (gatewayFilter !== "Todos os gateways")
+      params.set("gateway", gatewayFilter.toLowerCase())
+    if (productFilter !== "Todos os produtos")
+      params.set("product", productFilter)
+    if (query.trim()) params.set("q", query.trim())
+    if (saleStatusFilter !== "all") params.set("status", saleStatusFilter)
+    if (saleAttributionFilter !== "all")
+      params.set("attribution", saleAttributionFilter)
+
+    async function loadSales() {
+      setSalesLoading(true)
+      setSalesError("")
+      try {
+        const response = await fetch(`/api/sales?${params}`, {
+          signal: controller.signal,
+        })
+        const result = (await response.json().catch(() => ({}))) as {
+          error?: string
+          sales?: Array<Record<string, unknown>>
+          total?: number
+          summary?: SalesSummary
+        }
+        if (!response.ok)
+          throw new Error(
+            result.error || "Não foi possível carregar as vendas."
+          )
+        if (controller.signal.aborted) return
+        const liveRows = (result.sales ?? []).map((row): Sale => {
+          const currencyCode =
+            typeof row.currency === "string" ? row.currency : "BRL"
+          const nativeAmount =
+            Number(row.amount_minor ?? 0) /
+            10 ** currencyMinorUnit(currencyCode)
+          const convertedAmount =
+            typeof row.amount_brl === "number" ? row.amount_brl : null
+          const status =
+            row.status === "approved"
+              ? "Aprovada"
+              : row.status === "refunded"
+                ? "Reembolsada"
+                : row.status === "chargeback"
+                  ? "Chargeback"
+                  : "Aguardando"
+          const date =
+            typeof row.occurred_at === "string"
+              ? new Date(row.occurred_at).toLocaleString("pt-BR", {
+                  day: "2-digit",
+                  month: "2-digit",
+                  hour: "2-digit",
+                  minute: "2-digit",
+                })
+              : "—"
+          return {
+            id: String(row.external_id ?? ""),
+            date,
+            product: String(row.product_name ?? "Produto não identificado"),
+            buyer: "—",
+            gateway: row.provider === "kiwify" ? "Kiwify" : "Hotmart",
+            amount: convertedAmount ?? 0,
+            amountLabel:
+              new Intl.NumberFormat("pt-BR", {
+                style: "currency",
+                currency: convertedAmount === null ? currencyCode : "BRL",
+              }).format(convertedAmount ?? nativeAmount) +
+              (convertedAmount === null ? " · aguardando PTAX" : ""),
+            status,
+            campaign: String(
+              row.campaign_name ?? row.campaign_id ?? "Sem atribuição"
+            ),
+            matched: Boolean(row.campaign_id || row.adset_id || row.ad_id),
+          }
+        })
+        setLiveSales(liveRows)
+        setLiveSalesTotal(result.total ?? 0)
+        setLiveSalesSummary(result.summary ?? null)
+        const lastPage = Math.max(1, Math.ceil((result.total ?? 0) / 25))
+        if (salesPage > lastPage) setSalesPage(lastPage)
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          setSalesError(
+            error instanceof Error
+              ? error.message
+              : "Não foi possível carregar as vendas."
+          )
+          setLiveSales([])
+        }
+      } finally {
+        if (!controller.signal.aborted) setSalesLoading(false)
+      }
+    }
+
+    void loadSales()
+    return () => controller.abort()
+  }, [
+    accountFilter,
+    authState,
+    dataRefresh,
+    dateRange.from,
+    dateRange.to,
+    gatewayFilter,
+    productFilter,
+    query,
+    saleAttributionFilter,
+    saleStatusFilter,
+    salesPage,
+  ])
+
+  useEffect(() => {
+    if (authState !== "authenticated") return
+    const controller = new AbortController()
+    let timer = 0
+    async function loadRecentActivity() {
+      try {
+        const response = await fetch("/api/sync/recent?limit=5", {
+          signal: controller.signal,
+        })
+        if (!response.ok) throw new Error("Could not load recent sync activity")
+        const result = (await response.json()) as { runs?: SyncActivity[] }
+        if (!controller.signal.aborted) setRecentActivity(result.runs ?? [])
+      } catch (error) {
+        if (!controller.signal.aborted)
+          console.error("recent_activity_load_failed", error)
+      }
+      if (!controller.signal.aborted && activeSyncId)
+        timer = window.setTimeout(loadRecentActivity, 4000)
+    }
+    void loadRecentActivity()
+    return () => {
+      controller.abort()
+      window.clearTimeout(timer)
+    }
+  }, [activeSyncId, authState, dataRefresh])
 
   useEffect(() => {
     if (!activeSyncId) return
@@ -582,8 +894,8 @@ function App() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          from: dateForDaysAgo(period),
-          to: dateForDaysAgo(1),
+          from: dateRange.from,
+          to: dateRange.to,
           accountIds:
             accountFilter === "all"
               ? adAccountList.map((account) => account.id)
@@ -624,8 +936,8 @@ function App() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          from: dateForDaysAgo(period),
-          to: dateForDaysAgo(1),
+          from: dateRange.from,
+          to: dateRange.to,
         }),
       })
       const result = (await response.json().catch(() => ({}))) as {
@@ -654,64 +966,186 @@ function App() {
     }
   }
 
-  function exportCsv() {
-    const rows =
-      page === "sales"
-        ? filteredSales.map((sale) => [
-            sale.id,
-            sale.date,
-            sale.product,
-            sale.gateway,
-            sale.amountLabel ?? sale.amount,
-            sale.status,
-            sale.campaign,
-          ])
-        : visibleCampaigns.map((campaign) => [
-            campaign.id,
-            campaign.name,
-            campaign.product,
-            campaign.gateway,
-            campaign.spend,
-            campaign.revenue,
-            campaign.sales,
-          ])
-    const headers =
-      page === "sales"
-        ? [
-            "transacao",
-            "data",
-            "produto",
-            "gateway",
-            "valor_brl",
-            "status",
-            "campanha",
-          ]
-        : [
-            "id",
-            "campanha",
-            "produto",
-            "gateway",
-            "investimento_brl",
-            "receita_brl",
-            "vendas",
-          ]
-    const csv = [headers, ...rows]
-      .map((row) => row.map(csvCell).join(","))
-      .join("\n")
-    const url = URL.createObjectURL(
-      new Blob([`\uFEFF${csv}`], { type: "text/csv;charset=utf-8" })
+  function updatePeriod(days: number) {
+    setPeriod(days)
+    setDateRange(dateRangeForDays(days))
+    resetResultPages()
+  }
+
+  function applyDateRange(range: DateRange) {
+    setDateRange(range)
+    setPeriod(daysBetween(range))
+    resetResultPages()
+  }
+
+  async function exportCsv(selectedOnly = false) {
+    if (page === "sales") {
+      const rows =
+        authState === "authenticated"
+          ? await loadSalesForExport()
+          : demoFilteredSales.map((sale) => [
+              sale.id,
+              sale.date,
+              sale.product,
+              sale.gateway,
+              sale.amountLabel ?? sale.amount,
+              sale.status,
+              sale.campaign,
+            ])
+      if (rows) downloadCsv("vendas", salesCsvHeaders, rows)
+      return
+    }
+
+    const campaignsToExport = selectedOnly
+      ? visibleCampaigns.filter((campaign) =>
+          selectedCampaignIds.includes(campaign.id)
+        )
+      : visibleCampaigns
+    if (selectedOnly && !campaignsToExport.length) {
+      setToast("Selecione pelo menos uma campanha para exportar.")
+      return
+    }
+    downloadCsv(
+      selectedOnly ? "campanhas-selecionadas" : "campanhas",
+      campaignCsvHeaders,
+      campaignsToExport.map((campaign) => [
+        campaign.id,
+        campaign.name,
+        campaign.product,
+        campaign.gateway,
+        campaign.spend,
+        campaign.revenue,
+        campaign.sales,
+      ])
     )
-    const link = document.createElement("a")
-    link.href = url
-    link.download = `${page === "sales" ? "vendas" : "campanhas"}-${new Date().toISOString().slice(0, 10)}.csv`
-    link.click()
-    URL.revokeObjectURL(url)
+  }
+
+  async function loadSalesForExport() {
+    const params = new URLSearchParams({
+      from: dateRange.from,
+      to: dateRange.to,
+      limit: "100",
+    })
+    if (accountFilter !== "all") params.set("accountIds", accountFilter)
+    if (gatewayFilter !== "Todos os gateways")
+      params.set("gateway", gatewayFilter.toLowerCase())
+    if (productFilter !== "Todos os produtos")
+      params.set("product", productFilter)
+    if (query.trim()) params.set("q", query.trim())
+    if (saleStatusFilter !== "all") params.set("status", saleStatusFilter)
+    if (saleAttributionFilter !== "all")
+      params.set("attribution", saleAttributionFilter)
+
+    const rows: unknown[][] = []
+    let offset = 0
+    let total = Number.POSITIVE_INFINITY
+    try {
+      while (offset < total) {
+        params.set("offset", String(offset))
+        const response = await fetch(`/api/sales?${params}`)
+        const result = (await response.json().catch(() => ({}))) as {
+          error?: string
+          sales?: Array<Record<string, unknown>>
+          total?: number
+        }
+        if (!response.ok)
+          throw new Error(
+            result.error || "Não foi possível exportar as vendas."
+          )
+        const batch = result.sales ?? []
+        total = result.total ?? batch.length
+        rows.push(
+          ...batch.map((sale) => {
+            const currencyCode =
+              typeof sale.currency === "string" ? sale.currency : "BRL"
+            const amountBrl =
+              typeof sale.amount_brl === "number" ? sale.amount_brl : null
+            const minorAmount =
+              Number(sale.amount_minor ?? 0) /
+              10 ** currencyMinorUnit(currencyCode)
+            const status =
+              sale.status === "approved"
+                ? "Aprovada"
+                : sale.status === "refunded"
+                  ? "Reembolsada"
+                  : sale.status === "chargeback"
+                    ? "Chargeback"
+                    : "Aguardando"
+            return [
+              sale.external_id,
+              sale.occurred_at,
+              sale.product_name,
+              sale.provider === "kiwify" ? "Kiwify" : "Hotmart",
+              amountBrl ?? `${minorAmount} ${currencyCode} · aguardando PTAX`,
+              status,
+              sale.campaign_name ?? sale.campaign_id ?? "Sem atribuição",
+            ]
+          })
+        )
+        if (!batch.length) break
+        offset += batch.length
+      }
+      return rows
+    } catch (error) {
+      setToast(
+        error instanceof Error ? error.message : "Não foi possível exportar."
+      )
+      return null
+    }
   }
 
   function navigate(nextPage: Page) {
     setPage(nextPage)
     setMobileNavOpen(false)
-    setQuery("")
+    updateQuery("")
+  }
+
+  function openIntegrations() {
+    setHelpOpen(false)
+    navigate("integrations")
+  }
+
+  function connectAccount() {
+    navigate("integrations")
+    window.setTimeout(
+      () =>
+        document
+          .getElementById("meta-integration")
+          ?.scrollIntoView({ behavior: "smooth", block: "center" }),
+      0
+    )
+  }
+
+  function showCampaignSales(campaign: Campaign) {
+    setPage("sales")
+    setMobileNavOpen(false)
+    setAccountFilter(campaign.accountId)
+    setProductFilter("Todos os produtos")
+    setGatewayFilter("Todos os gateways")
+    setSaleStatusFilter("all")
+    setSaleAttributionFilter("matched")
+    setQuery(
+      authState === "authenticated"
+        ? campaign.name
+        : (campaign.name.split("•").at(-1)?.trim() ?? campaign.name)
+    )
+    resetResultPages()
+  }
+
+  async function logOut() {
+    try {
+      const response = await fetch("/api/auth/logout", { method: "POST" })
+      if (!response.ok) throw new Error("Não foi possível encerrar a sessão.")
+      setAuthState("required")
+      setLiveCampaigns(null)
+      setLiveSales(null)
+      setRecentActivity([])
+      setToast("")
+    } catch (error) {
+      setToast(
+        error instanceof Error ? error.message : "Não foi possível sair."
+      )
+    }
   }
 
   if (authState === "checking")
@@ -794,12 +1228,11 @@ function App() {
         </div>
 
         <div className="workspace-switcher">
-          <div className="workspace-avatar">L</div>
+          <div className="workspace-avatar">P</div>
           <div className="workspace-copy">
             <strong>Meu workspace</strong>
-            <span>Plano pessoal</span>
+            <span>Workspace único</span>
           </div>
-          <ChevronDown size={15} />
         </div>
 
         <div className="nav-caption">WORKSPACE</div>
@@ -807,6 +1240,7 @@ function App() {
           <button
             className={`nav-item ${page === "overview" ? "active" : ""}`}
             onClick={() => navigate("overview")}
+            aria-current={page === "overview" ? "page" : undefined}
           >
             <LayoutDashboard size={18} />
             <span>Visão geral</span>
@@ -815,18 +1249,28 @@ function App() {
           <button
             className={`nav-item ${page === "sales" ? "active" : ""}`}
             onClick={() => navigate("sales")}
+            aria-current={page === "sales" ? "page" : undefined}
           >
             <ShoppingBag size={18} />
             <span>Vendas</span>
-            <span className="nav-count">184</span>
+            <span className="nav-count">{salesTotal}</span>
           </button>
           <button
             className={`nav-item ${page === "integrations" ? "active" : ""}`}
             onClick={() => navigate("integrations")}
+            aria-current={page === "integrations" ? "page" : undefined}
           >
             <Link2 size={18} />
             <span>Integrações</span>
-            <span className="nav-dot" />
+            <span
+              className={
+                integrationStatus.meta ||
+                integrationStatus.hotmart ||
+                integrationStatus.kiwify
+                  ? "nav-dot nav-dot-ready"
+                  : "nav-dot nav-dot-pending"
+              }
+            />
           </button>
         </nav>
 
@@ -834,7 +1278,9 @@ function App() {
           CONTAS DE ANÚNCIO{" "}
           <button
             aria-label="Adicionar conta"
-            onClick={() => navigate("integrations")}
+            onClick={connectAccount}
+            title="Conectar uma conta Meta"
+            type="button"
           >
             <Plus size={15} />
           </button>
@@ -842,10 +1288,10 @@ function App() {
         <div className="account-list">
           {adAccountList.map((account) => (
             <button
-              className="account-nav-item"
+              className={`account-nav-item ${accountFilter === account.id ? "selected" : ""}`}
               key={account.id}
               onClick={() => {
-                setAccountFilter(account.id)
+                updateAccountFilter(account.id)
                 navigate("overview")
               }}
             >
@@ -859,10 +1305,17 @@ function App() {
               <span className="account-status" />
             </button>
           ))}
+          {!adAccountList.length && authState === "authenticated" && (
+            <span className="account-list-empty">Nenhuma conta conectada</span>
+          )}
         </div>
 
         <div className="sidebar-bottom">
-          <div className="help-card">
+          <button
+            className="help-card"
+            onClick={() => setHelpOpen(true)}
+            type="button"
+          >
             <div className="help-icon">
               <CircleHelp size={17} />
             </div>
@@ -871,15 +1324,56 @@ function App() {
               <span>Veja como configurar</span>
             </div>
             <ArrowRight size={15} />
-          </div>
-          <button className="profile-button">
-            <div className="profile-avatar">LM</div>
-            <span className="profile-copy">
-              <strong>Leo Martins</strong>
-              <small>Administrador</small>
-            </span>
-            <MoreHorizontal size={19} />
           </button>
+          <Popover
+            label="Menu da conta"
+            trigger={
+              <>
+                <div className="profile-avatar">A</div>
+                <span className="profile-copy">
+                  <strong>Administrador</strong>
+                  <small>Workspace privado</small>
+                </span>
+                <MoreHorizontal size={19} />
+              </>
+            }
+            triggerClassName="profile-button"
+            panelClassName="profile-menu"
+          >
+            {(close) => (
+              <div className="popover-actions">
+                <strong>Conta administrativa</strong>
+                <button
+                  onClick={() => {
+                    close()
+                    navigate("integrations")
+                    window.setTimeout(
+                      () =>
+                        document
+                          .getElementById("account-security")
+                          ?.scrollIntoView({
+                            behavior: "smooth",
+                            block: "center",
+                          }),
+                      0
+                    )
+                  }}
+                  type="button"
+                >
+                  <Settings2 size={15} /> Alterar senha
+                </button>
+                <button
+                  onClick={() => {
+                    close()
+                    void logOut()
+                  }}
+                  type="button"
+                >
+                  <LogOut size={15} /> Sair do dashboard
+                </button>
+              </div>
+            )}
+          </Popover>
         </div>
       </aside>
 
@@ -914,18 +1408,70 @@ function App() {
                 ? "Ambiente de demonstração"
                 : "Dados conectados"}
             </div>
-            <button
-              className="icon-button notification-button"
-              aria-label="Notificações"
+            <Popover
+              label="Atividade recente"
+              trigger={
+                <>
+                  <Bell size={18} />
+                  {recentActivity.some((run) =>
+                    ["queued", "running", "partial", "failed"].includes(
+                      run.status
+                    )
+                  ) && <i />}
+                </>
+              }
+              triggerClassName="icon-button notification-button"
+              panelClassName="activity-menu"
             >
-              <Bell size={18} />
-              <i />
-            </button>
+              {() => (
+                <div className="activity-feed">
+                  <div className="popover-heading">
+                    <strong>Atividade recente</strong>
+                    <span>{recentActivity.length}</span>
+                  </div>
+                  {recentActivity.length ? (
+                    recentActivity.map((run) => (
+                      <article className="activity-item" key={run.id}>
+                        <span className={`activity-state ${run.status}`} />
+                        <div>
+                          <strong>
+                            {run.type === "meta"
+                              ? "Atualização de anúncios"
+                              : "Reconciliação de vendas"}
+                          </strong>
+                          <span>{syncStatusLabel(run.status)}</span>
+                          <small>
+                            {formatActivityDate(
+                              run.completed_at ?? run.created_at
+                            )}
+                          </small>
+                          {run.error_message && (
+                            <small className="activity-error">
+                              {run.error_message}
+                            </small>
+                          )}
+                        </div>
+                      </article>
+                    ))
+                  ) : (
+                    <p className="popover-empty">
+                      Nenhuma sincronização registrada neste workspace.
+                    </p>
+                  )}
+                </div>
+              )}
+            </Popover>
             <div className="topbar-divider" />
-            <button className="topbar-help">
+            <button
+              className="topbar-help"
+              onClick={() => setHelpOpen(true)}
+              type="button"
+            >
               <CircleHelp size={17} /> Ajuda
             </button>
-            <div className="topbar-avatar">LM</div>
+            <div aria-label="Administrador" className="topbar-avatar">
+              A
+            </div>
           </div>
         </header>
 
@@ -933,17 +1479,30 @@ function App() {
           {page === "overview" && (
             <OverviewPage
               period={period}
-              setPeriod={setPeriod}
+              setPeriod={updatePeriod}
+              dateRange={dateRange}
+              onDateRangeApply={applyDateRange}
               accountFilter={accountFilter}
-              setAccountFilter={setAccountFilter}
+              setAccountFilter={updateAccountFilter}
               productFilter={productFilter}
-              setProductFilter={setProductFilter}
+              setProductFilter={updateProductFilter}
               gatewayFilter={gatewayFilter}
-              setGatewayFilter={setGatewayFilter}
+              setGatewayFilter={updateGatewayFilter}
               level={level}
-              setLevel={setLevel}
+              setLevel={updateLevel}
               query={query}
-              setQuery={setQuery}
+              setQuery={updateQuery}
+              campaignPerformanceFilter={campaignPerformanceFilter}
+              setCampaignPerformanceFilter={updateCampaignPerformanceFilter}
+              campaignPage={campaignPage}
+              setCampaignPage={setCampaignPage}
+              selectedCampaignIds={selectedCampaignIds}
+              setSelectedCampaignIds={setSelectedCampaignIds}
+              campaignColumns={campaignColumns}
+              setCampaignColumns={setCampaignColumns}
+              onExportSelected={() => void exportCsv(true)}
+              onShowCampaignSales={showCampaignSales}
+              onToast={setToast}
               chartMode={chartMode}
               setChartMode={setChartMode}
               totals={totals}
@@ -955,28 +1514,45 @@ function App() {
               demo={authState === "demo"}
               live={liveCampaigns !== null}
               onSync={requestSync}
-              onExport={exportCsv}
+              onExport={() => void exportCsv()}
               syncing={syncing}
+              loading={dashboardLoading}
+              error={dashboardError}
+              onRetry={() => setDataRefresh((value) => value + 1)}
             />
           )}
           {page === "sales" && (
             <SalesPage
               period={period}
-              setPeriod={setPeriod}
+              setPeriod={updatePeriod}
+              dateRange={dateRange}
+              onDateRangeApply={applyDateRange}
               gatewayFilter={gatewayFilter}
-              setGatewayFilter={setGatewayFilter}
+              setGatewayFilter={updateGatewayFilter}
               productFilter={productFilter}
-              setProductFilter={setProductFilter}
+              setProductFilter={updateProductFilter}
               query={query}
-              setQuery={setQuery}
-              rows={filteredSales}
+              setQuery={updateQuery}
+              rows={displayedSales}
+              total={salesTotal}
+              summary={salesSummary}
+              page={salesPage}
+              setPage={setSalesPage}
+              loading={salesLoading}
+              error={salesError}
+              onRetry={() => setDataRefresh((value) => value + 1)}
+              statusFilter={saleStatusFilter}
+              setStatusFilter={updateSaleStatusFilter}
+              attributionFilter={saleAttributionFilter}
+              setAttributionFilter={updateSaleAttributionFilter}
+              onSelectSale={setSelectedSale}
               accountFilter={accountFilter}
-              setAccountFilter={setAccountFilter}
+              setAccountFilter={updateAccountFilter}
               accountOptions={adAccountList}
               productOptions={productOptions}
               demo={authState === "demo"}
               onReconcile={requestReconciliation}
-              onExport={exportCsv}
+              onExport={() => void exportCsv()}
               reconciling={reconciling}
             />
           )}
@@ -985,6 +1561,7 @@ function App() {
               onSync={requestSync}
               syncing={syncing}
               onToast={setToast}
+              onHelp={() => setHelpOpen(true)}
             />
           )}
         </main>
@@ -1012,6 +1589,19 @@ function App() {
           </button>
         </div>
       )}
+      {helpOpen && (
+        <HelpGuide
+          onClose={() => setHelpOpen(false)}
+          onOpenIntegrations={openIntegrations}
+        />
+      )}
+      {selectedSale && (
+        <SaleDetails
+          sale={selectedSale}
+          onClose={() => setSelectedSale(null)}
+          onToast={setToast}
+        />
+      )}
     </div>
   )
 }
@@ -1019,6 +1609,8 @@ function App() {
 type FiltersProps = {
   period: Period
   setPeriod: (period: Period) => void
+  dateRange: DateRange
+  onDateRangeApply: (range: DateRange) => void
   accountFilter?: string
   setAccountFilter?: (account: string) => void
   productFilter: string
@@ -1048,6 +1640,19 @@ type OverviewPageProps = FiltersProps & {
     roi: number | null
   }
   rows: Campaign[]
+  campaignPerformanceFilter: "all" | "with-sales" | "without-sales"
+  setCampaignPerformanceFilter: (
+    filter: "all" | "with-sales" | "without-sales"
+  ) => void
+  campaignPage: number
+  setCampaignPage: (page: number) => void
+  selectedCampaignIds: string[]
+  setSelectedCampaignIds: (ids: string[]) => void
+  campaignColumns: Record<CampaignColumn, boolean>
+  setCampaignColumns: (columns: Record<CampaignColumn, boolean>) => void
+  onExportSelected: () => void
+  onShowCampaignSales: (campaign: Campaign) => void
+  onToast: (message: string) => void
   accountOptions: AdAccount[]
   integrationStatus: { meta: boolean; hotmart: boolean; kiwify: boolean }
   dailyData?: Array<{ label: string; spend: number; revenue: number }>
@@ -1055,12 +1660,30 @@ type OverviewPageProps = FiltersProps & {
   live: boolean
   onSync: () => void
   syncing: boolean
+  loading: boolean
+  error: string
+  onRetry: () => void
 }
 
 function OverviewPage(props: OverviewPageProps) {
   const accountName = props.accountOptions.find(
     (account) => account.id === props.accountFilter
   )?.name
+  const activeFilterCount =
+    Number(props.accountFilter !== "all") +
+    Number(props.productFilter !== "Todos os produtos") +
+    Number(props.gatewayFilter !== "Todos os gateways") +
+    Number(props.campaignPerformanceFilter !== "all")
+
+  function exportChartData() {
+    const points = props.dailyData ?? dailyMetrics
+    downloadCsv(
+      "performance-diaria",
+      ["data", "investimento_brl", "receita_brl"],
+      points.map((point) => [point.label, point.spend, point.revenue])
+    )
+  }
+
   return (
     <>
       <div className="page-heading">
@@ -1068,7 +1691,7 @@ function OverviewPage(props: OverviewPageProps) {
           <div className="eyebrow">
             <span className="eyebrow-line" /> PERFORMANCE{" "}
             <span className="eyebrow-period">
-              · ÚLTIMOS {props.period} DIAS
+              · {formatRange(props.dateRange)}
             </span>
           </div>
           <h1>
@@ -1118,16 +1741,18 @@ function OverviewPage(props: OverviewPageProps) {
           {([7, 14, 30] as Period[]).map((days) => (
             <button
               key={days}
-              className={props.period === days ? "selected" : ""}
+              className={
+                isPeriodSelected(props.dateRange, days) ? "selected" : ""
+              }
               onClick={() => props.setPeriod(days)}
             >
               {days} dias
             </button>
           ))}
-          <button className="date-range-button" aria-label="Selecionar período">
-            <CalendarDays size={15} />
-            <ChevronDown size={13} />
-          </button>
+          <DateRangeControl
+            onApply={props.onDateRangeApply}
+            value={props.dateRange}
+          />
         </div>
         <div className="filter-divider" />
         <div className="select-filter">
@@ -1177,12 +1802,68 @@ function OverviewPage(props: OverviewPageProps) {
           </select>
           <ChevronDown size={13} />
         </div>
-        <button className="filter-more" aria-label="Mais filtros">
-          <Filter size={16} />
-          <span>Filtros</span>
-          <span className="filter-count">3</span>
-        </button>
+        <Popover
+          label="Mais filtros de campanhas"
+          trigger={
+            <>
+              <Filter size={16} />
+              <span>Filtros</span>
+              <span className="filter-count">{activeFilterCount}</span>
+            </>
+          }
+          triggerClassName="filter-more"
+          panelClassName="advanced-filter-menu"
+        >
+          {(close) => (
+            <div className="popover-actions">
+              <strong>Campanhas</strong>
+              <label
+                className="popover-select-label"
+                htmlFor="campaign-performance-filter"
+              >
+                Resultado atribuído
+              </label>
+              <select
+                id="campaign-performance-filter"
+                onChange={(event) =>
+                  props.setCampaignPerformanceFilter(
+                    event.target
+                      .value as OverviewPageProps["campaignPerformanceFilter"]
+                  )
+                }
+                value={props.campaignPerformanceFilter}
+              >
+                <option value="all">Todas as campanhas</option>
+                <option value="with-sales">Com vendas</option>
+                <option value="without-sales">Sem vendas</option>
+              </select>
+              <button
+                onClick={() => {
+                  props.setCampaignPerformanceFilter("all")
+                  close()
+                }}
+                type="button"
+              >
+                Limpar filtro avançado
+              </button>
+            </div>
+          )}
+        </Popover>
       </div>
+
+      {props.error && (
+        <div className="inline-error" role="alert">
+          <span>{props.error}</span>
+          <button onClick={props.onRetry} type="button">
+            Tentar novamente
+          </button>
+        </div>
+      )}
+      {props.loading && (
+        <div aria-live="polite" className="loading-note">
+          <RefreshCw className="spin" size={14} /> Atualizando dados do período…
+        </div>
+      )}
 
       <section className="metrics-grid" aria-label="Indicadores principais">
         <MetricCard
@@ -1279,12 +1960,27 @@ function OverviewPage(props: OverviewPageProps) {
                   Investimento
                 </button>
               </div>
-              <button
-                className="icon-button subtle-icon"
-                aria-label="Opções do gráfico"
+              <Popover
+                label="Opções do gráfico"
+                trigger={<MoreHorizontal size={19} />}
+                triggerClassName="icon-button subtle-icon"
+                panelClassName="chart-menu"
               >
-                <MoreHorizontal size={19} />
-              </button>
+                {(close) => (
+                  <div className="popover-actions">
+                    <strong>Dados do gráfico</strong>
+                    <button
+                      onClick={() => {
+                        exportChartData()
+                        close()
+                      }}
+                      type="button"
+                    >
+                      <Download size={15} /> Baixar série em CSV
+                    </button>
+                  </div>
+                )}
+              </Popover>
             </div>
           </div>
           <div className="chart-legend">
@@ -1303,13 +1999,13 @@ function OverviewPage(props: OverviewPageProps) {
           </div>
           <PerformanceChart
             mode={props.chartMode}
-            days={props.period}
+            days={daysBetween(props.dateRange)}
             data={props.dailyData}
           />
           <div className="chart-footer">
-            <span>{chartBoundary(props.period, "start")}</span>
-            <span>{chartBoundary(props.period, "middle")}</span>
-            <span>{chartBoundary(props.period, "end")}</span>
+            <span>{chartBoundary(props.dateRange, "start")}</span>
+            <span>{chartBoundary(props.dateRange, "middle")}</span>
+            <span>{chartBoundary(props.dateRange, "end")}</span>
             <span className="chart-timezone">
               Fuso:{" "}
               {accountName
@@ -1326,12 +2022,23 @@ function OverviewPage(props: OverviewPageProps) {
               <div className="panel-kicker">QUALIDADE DOS DADOS</div>
               <h2>Atribuição de vendas</h2>
             </div>
-            <button
-              className="icon-button subtle-icon"
-              aria-label="Mais sobre atribuição"
+            <Popover
+              label="Como a atribuição é calculada"
+              trigger={<MoreHorizontal size={19} />}
+              triggerClassName="icon-button subtle-icon"
+              panelClassName="attribution-help-menu"
             >
-              <MoreHorizontal size={19} />
-            </button>
+              {() => (
+                <div className="attribution-help-copy">
+                  <strong>Como funciona</strong>
+                  <p>
+                    Uma venda é atribuída quando o webhook inclui identificador
+                    de campanha, conjunto ou anúncio. O vínculo pode levar em
+                    conta UTMs e dados da Meta disponíveis no período.
+                  </p>
+                </div>
+              )}
+            </Popover>
           </div>
           <div className="match-summary">
             <div
@@ -1456,39 +2163,65 @@ function OverviewPage(props: OverviewPageProps) {
                 )
               )}
             </div>
-            <button
-              className="icon-button subtle-icon settings-filter"
-              aria-label="Configurar colunas"
+            <Popover
+              label="Configurar colunas da tabela"
+              trigger={<Settings2 size={17} />}
+              triggerClassName="icon-button subtle-icon settings-filter"
+              panelClassName="column-menu"
             >
-              <Settings2 size={17} />
-            </button>
+              {() => (
+                <div className="column-menu-content">
+                  <strong>Colunas visíveis</strong>
+                  {campaignColumnOptions.map(([key, label]) => (
+                    <label key={key}>
+                      <input
+                        checked={props.campaignColumns[key]}
+                        onChange={(event) =>
+                          props.setCampaignColumns({
+                            ...props.campaignColumns,
+                            [key]: event.target.checked,
+                          })
+                        }
+                        type="checkbox"
+                      />
+                      {label}
+                    </label>
+                  ))}
+                </div>
+              )}
+            </Popover>
           </div>
         </div>
+        {props.selectedCampaignIds.length > 0 && (
+          <div className="selection-toolbar">
+            <span>
+              {props.selectedCampaignIds.length} campanha(s) selecionada(s)
+            </span>
+            <button onClick={props.onExportSelected} type="button">
+              <Download size={14} /> Exportar selecionadas
+            </button>
+            <button
+              onClick={() => props.setSelectedCampaignIds([])}
+              type="button"
+            >
+              Limpar seleção
+            </button>
+          </div>
+        )}
         <CampaignTable
           rows={props.rows}
           level={props.level}
           period={props.period}
           accounts={props.accountOptions}
           live={props.live}
+          page={props.campaignPage}
+          setPage={props.setCampaignPage}
+          selectedIds={props.selectedCampaignIds}
+          setSelectedIds={props.setSelectedCampaignIds}
+          columns={props.campaignColumns}
+          onShowSales={props.onShowCampaignSales}
+          onToast={props.onToast}
         />
-        <div className="table-footer">
-          <span>
-            Exibindo{" "}
-            <strong>
-              {props.rows.length ? 1 : 0}–{props.rows.length}
-            </strong>{" "}
-            de <strong>{props.rows.length}</strong> campanhas
-          </span>
-          <div className="pagination">
-            <button disabled aria-label="Página anterior">
-              <ArrowLeft size={15} />
-            </button>
-            <button className="current-page">1</button>
-            <button disabled aria-label="Próxima página">
-              <ArrowRight size={15} />
-            </button>
-          </div>
-        </div>
       </section>
       <div className="disclaimer">
         <Clock3 size={13} /> Os dados são atualizados sob demanda. Vendas são
@@ -1522,9 +2255,6 @@ function MetricCard({
     <article className="metric-card">
       <div className="metric-card-top">
         <span className={`metric-icon ${iconStyle}`}>{icon}</span>
-        <button className="metric-menu" aria-label={`Mais opções de ${label}`}>
-          <MoreHorizontal size={18} />
-        </button>
       </div>
       <div className="metric-label">
         {label}
@@ -1569,7 +2299,7 @@ function PerformanceChart({
   data,
 }: {
   mode: "Receita" | "Investimento"
-  days: Period
+  days: number
   data?: Array<{ label: string; spend: number; revenue: number }>
 }) {
   const points = (data ?? dailyMetrics).slice(
@@ -1605,20 +2335,6 @@ function PerformanceChart({
         aria-label={`${mode} diária nos últimos ${days} dias`}
         preserveAspectRatio="none"
       >
-        <defs>
-          <linearGradient id="chart-fill" x1="0" x2="0" y1="0" y2="1">
-            <stop
-              offset="0%"
-              stopColor={mode === "Receita" ? "#b4d73f" : "#527b67"}
-              stopOpacity=".23"
-            />
-            <stop
-              offset="100%"
-              stopColor={mode === "Receita" ? "#b4d73f" : "#527b67"}
-              stopOpacity="0"
-            />
-          </linearGradient>
-        </defs>
         {[18, 56, 94, 132, 170].map((y) => (
           <line
             key={y}
@@ -1629,7 +2345,7 @@ function PerformanceChart({
             className="chart-gridline"
           />
         ))}
-        <path d={area} fill="url(#chart-fill)" />
+        <path d={area} fill="#0066cc" fillOpacity=".08" />
         <path
           d={line}
           fill="none"
@@ -1666,21 +2382,27 @@ function CampaignTable({
   period,
   accounts: accountOptions,
   live,
+  page,
+  setPage,
+  selectedIds,
+  setSelectedIds,
+  columns,
+  onShowSales,
+  onToast,
 }: {
   rows: Campaign[]
   level: Level
   period: Period
   accounts: AdAccount[]
   live: boolean
+  page: number
+  setPage: (page: number) => void
+  selectedIds: string[]
+  setSelectedIds: (ids: string[]) => void
+  columns: Record<CampaignColumn, boolean>
+  onShowSales: (campaign: Campaign) => void
+  onToast: (message: string) => void
 }) {
-  if (!rows.length)
-    return (
-      <div className="empty-state">
-        <Search size={21} />
-        <strong>Nenhuma campanha encontrada</strong>
-        <span>Tente ajustar os filtros para ampliar os resultados.</span>
-      </div>
-    )
   const expandedRows =
     live || level === "Campanhas"
       ? rows.map((campaign) => ({
@@ -1698,33 +2420,75 @@ function CampaignTable({
             scale: 0.5,
           }))
         )
+  const pageSize = 10
+  const totalPages = Math.max(1, Math.ceil(expandedRows.length / pageSize))
+  const currentPage = Math.min(page, totalPages)
+  const pageRows = expandedRows.slice(
+    (currentPage - 1) * pageSize,
+    currentPage * pageSize
+  )
+  const pageCampaignIds = [...new Set(pageRows.map((row) => row.campaign.id))]
+  const allSelected =
+    pageCampaignIds.length > 0 &&
+    pageCampaignIds.every((id) => selectedIds.includes(id))
+
+  function toggleCampaign(id: string, checked: boolean) {
+    setSelectedIds(
+      checked
+        ? [...new Set([...selectedIds, id])]
+        : selectedIds.filter((selectedId) => selectedId !== id)
+    )
+  }
+
+  function togglePage(checked: boolean) {
+    setSelectedIds(
+      checked
+        ? [...new Set([...selectedIds, ...pageCampaignIds])]
+        : selectedIds.filter((id) => !pageCampaignIds.includes(id))
+    )
+  }
+
+  if (!rows.length)
+    return (
+      <div className="empty-state">
+        <Search size={21} />
+        <strong>Nenhuma campanha encontrada</strong>
+        <span>Tente ajustar os filtros para ampliar os resultados.</span>
+      </div>
+    )
+
   return (
-    <div className="table-scroll">
-      <table className="data-table campaign-table">
-        <thead>
-          <tr>
-            <th className="check-cell">
-              <input aria-label="Selecionar todas as linhas" type="checkbox" />
-            </th>
-            <th className="campaign-name-head">
-              {level === "Campanhas"
-                ? "Campanha"
-                : level === "Conjuntos"
-                  ? "Conjunto de anúncios"
-                  : "Anúncio"}
-            </th>
-            <th>Conta de anúncio</th>
-            <th>Investimento</th>
-            <th>Vendas</th>
-            <th>Receita líquida</th>
-            <th>ROAS</th>
-            <th>CTR</th>
-            <th />
-          </tr>
-        </thead>
-        <tbody>
-          {expandedRows.map(
-            ({ campaign, name, id, scale: rowScale }, index) => {
+    <>
+      <div className="table-scroll">
+        <table className="data-table campaign-table">
+          <thead>
+            <tr>
+              <th className="check-cell">
+                <input
+                  aria-label="Selecionar todas as campanhas desta página"
+                  checked={allSelected}
+                  onChange={(event) => togglePage(event.target.checked)}
+                  type="checkbox"
+                />
+              </th>
+              <th className="campaign-name-head">
+                {level === "Campanhas"
+                  ? "Campanha"
+                  : level === "Conjuntos"
+                    ? "Conjunto de anúncios"
+                    : "Anúncio"}
+              </th>
+              {columns.account && <th>Conta de anúncio</th>}
+              {columns.spend && <th>Investimento</th>}
+              {columns.sales && <th>Vendas</th>}
+              {columns.revenue && <th>Receita líquida</th>}
+              {columns.roas && <th>ROAS</th>}
+              {columns.ctr && <th>CTR</th>}
+              <th aria-label="Ações" />
+            </tr>
+          </thead>
+          <tbody>
+            {pageRows.map(({ campaign, name, id, scale: rowScale }, index) => {
               const factor = live ? 1 : (period / 14) * rowScale
               const spend = campaign.spend * factor
               const revenue = campaign.revenue * factor
@@ -1744,7 +2508,14 @@ function CampaignTable({
               return (
                 <tr key={id}>
                   <td className="check-cell">
-                    <input aria-label={`Selecionar ${name}`} type="checkbox" />
+                    <input
+                      aria-label={`Selecionar campanha ${name}`}
+                      checked={selectedIds.includes(campaign.id)}
+                      onChange={(event) =>
+                        toggleCampaign(campaign.id, event.target.checked)
+                      }
+                      type="checkbox"
+                    />
                   </td>
                   <td>
                     <div className="campaign-cell">
@@ -1766,64 +2537,130 @@ function CampaignTable({
                       </span>
                     </div>
                   </td>
-                  <td>
-                    <div className="account-cell">
+                  {columns.account && (
+                    <td>
+                      <div className="account-cell">
+                        <span
+                          className="account-avatar table-avatar"
+                          style={{
+                            backgroundColor: account?.color ?? accountColors[0],
+                          }}
+                        >
+                          {initials}
+                        </span>
+                        <span>
+                          {account?.name ??
+                            campaign.accountName ??
+                            campaign.accountId}
+                        </span>
+                      </div>
+                    </td>
+                  )}
+                  {columns.spend && (
+                    <td className="numeric-cell">{currency.format(spend)}</td>
+                  )}
+                  {columns.sales && (
+                    <td className="numeric-cell">
+                      {numberFormat.format(Math.round(campaign.sales * factor))}
+                    </td>
+                  )}
+                  {columns.revenue && (
+                    <td className="numeric-cell revenue-cell">
+                      {currency.format(revenue)}
+                    </td>
+                  )}
+                  {columns.roas && (
+                    <td>
                       <span
-                        className="account-avatar table-avatar"
-                        style={{
-                          backgroundColor: account?.color ?? accountColors[0],
-                        }}
+                        className={`roas-badge ${roas !== null && roas >= 3 ? "roas-good" : "roas-mid"}`}
                       >
-                        {initials}
+                        {roas === null
+                          ? "—"
+                          : `${roas.toFixed(2).replace(".", ",")}x`}
                       </span>
-                      <span>
-                        {account?.name ??
-                          campaign.accountName ??
-                          campaign.accountId}
-                      </span>
-                    </div>
-                  </td>
-                  <td className="numeric-cell">{currency.format(spend)}</td>
-                  <td className="numeric-cell">
-                    {numberFormat.format(Math.round(campaign.sales * factor))}
-                  </td>
-                  <td className="numeric-cell revenue-cell">
-                    {currency.format(revenue)}
-                  </td>
+                    </td>
+                  )}
+                  {columns.ctr && (
+                    <td className="numeric-cell">
+                      {campaign.impressions > 0
+                        ? `${((campaign.clicks / campaign.impressions) * 100).toFixed(2).replace(".", ",")}%`
+                        : "—"}
+                    </td>
+                  )}
                   <td>
-                    <span
-                      className={`roas-badge ${roas !== null && roas >= 3 ? "roas-good" : "roas-mid"}`}
+                    <Popover
+                      label={`Opções para ${name}`}
+                      trigger={<MoreHorizontal size={17} />}
+                      triggerClassName="icon-button row-menu"
+                      panelClassName="row-action-menu"
+                      portal
                     >
-                      {roas === null
-                        ? "—"
-                        : `${roas.toFixed(2).replace(".", ",")}x`}
-                    </span>
-                  </td>
-                  <td className="numeric-cell">
-                    {campaign.impressions > 0
-                      ? `${((campaign.clicks / campaign.impressions) * 100).toFixed(2).replace(".", ",")}%`
-                      : "—"}
-                  </td>
-                  <td>
-                    <button
-                      className="icon-button row-menu"
-                      aria-label={`Opções para ${name}`}
-                    >
-                      <MoreHorizontal size={17} />
-                    </button>
+                      {(close) => (
+                        <div className="popover-actions">
+                          <strong>Ações da campanha</strong>
+                          <button
+                            onClick={() => {
+                              void copyCampaignId(campaign.id, onToast)
+                              close()
+                            }}
+                            type="button"
+                          >
+                            <Copy size={15} /> Copiar ID
+                          </button>
+                          <button
+                            onClick={() => {
+                              onShowSales(campaign)
+                              close()
+                            }}
+                            type="button"
+                          >
+                            <ShoppingBag size={15} /> Ver vendas atribuídas
+                          </button>
+                        </div>
+                      )}
+                    </Popover>
                   </td>
                 </tr>
               )
-            }
-          )}
-        </tbody>
-      </table>
-    </div>
+            })}
+          </tbody>
+        </table>
+      </div>
+      <div className="table-footer">
+        <span>
+          Exibindo{" "}
+          <strong>
+            {expandedRows.length ? (currentPage - 1) * pageSize + 1 : 0}–
+            {Math.min(currentPage * pageSize, expandedRows.length)}
+          </strong>{" "}
+          de <strong>{expandedRows.length}</strong> linhas
+        </span>
+        <Pagination
+          label="campanhas"
+          onChange={setPage}
+          page={currentPage}
+          pageSize={pageSize}
+          totalItems={expandedRows.length}
+        />
+      </div>
+    </>
   )
 }
 
 type SalesPageProps = FiltersProps & {
   rows: Sale[]
+  total: number
+  summary: SalesSummary | null
+  page: number
+  setPage: (page: number) => void
+  loading: boolean
+  error: string
+  onRetry: () => void
+  statusFilter: SaleStatusFilter
+  setStatusFilter: (filter: SaleStatusFilter) => void
+  attributionFilter: SaleAttributionFilter
+  setAttributionFilter: (filter: SaleAttributionFilter) => void
+  onSelectSale: (sale: Sale) => void
   demo: boolean
   accountFilter: string
   setAccountFilter: (account: string) => void
@@ -1833,16 +2670,22 @@ type SalesPageProps = FiltersProps & {
 }
 
 function SalesPage(props: SalesPageProps) {
-  const approved = props.rows.filter((sale) => sale.status === "Aprovada")
-  const approvedAmount = approved.reduce((sum, sale) => sum + sale.amount, 0)
-  const matched = props.rows.filter((sale) => sale.matched).length
+  const summary = props.summary
+  const matchedRate = summary?.total
+    ? Math.round((summary.matched / summary.total) * 100)
+    : 0
+  const firstRow = props.total ? (props.page - 1) * 25 + 1 : 0
+  const lastRow = Math.min(props.page * 25, props.total)
+
   return (
     <>
       <div className="page-heading">
         <div>
           <div className="eyebrow">
             <span className="eyebrow-line" /> RECEITA{" "}
-            <span className="eyebrow-period">· CONCILIAÇÃO DE PEDIDOS</span>
+            <span className="eyebrow-period">
+              · {formatRange(props.dateRange)}
+            </span>
           </div>
           <h1>
             Vendas<span className="heading-period">.</span>
@@ -1850,13 +2693,18 @@ function SalesPage(props: SalesPageProps) {
           <p>Pedidos dos seus gateways, com origem e status em um só lugar.</p>
         </div>
         <div className="heading-actions">
-          <button className="button button-secondary" onClick={props.onExport}>
+          <button
+            className="button button-secondary"
+            onClick={props.onExport}
+            type="button"
+          >
             <Download size={16} /> Exportar
           </button>
           <button
             className="button button-primary"
             onClick={props.onReconcile}
             disabled={props.reconciling}
+            type="button"
           >
             <RefreshCw size={16} className={props.reconciling ? "spin" : ""} />
             {props.reconciling ? "Buscando…" : "Reconciliar vendas"}
@@ -1876,6 +2724,7 @@ function SalesPage(props: SalesPageProps) {
             onClick={() =>
               window.dispatchEvent(new CustomEvent("navigate-integrations"))
             }
+            type="button"
           >
             Configurar gateways <ArrowRight size={14} />
           </button>
@@ -1884,40 +2733,33 @@ function SalesPage(props: SalesPageProps) {
       <div className="sales-summary-grid">
         <div className="sales-summary-card">
           <span>Pedidos no período</span>
-          <strong>{props.rows.length}</strong>
-          <small>Hotmart e Kiwify</small>
+          <strong>{summary?.total ?? 0}</strong>
+          <small>{summary?.approved ?? 0} aprovados</small>
         </div>
         <div className="sales-summary-card">
           <span>Receita aprovada</span>
-          <strong>{currency.format(approvedAmount)}</strong>
+          <strong>{currency.format(summary?.approvedRevenue ?? 0)}</strong>
           <small>
-            {props.rows.some((sale) =>
-              sale.amountLabel?.includes("aguardando PTAX")
-            )
-              ? "Conversão cambial pendente"
-              : "Descontados estornos"}
+            {summary?.approvedAmountCount !== summary?.approved
+              ? "Valores convertidos para BRL"
+              : "Reembolsos e chargebacks excluídos"}
           </small>
         </div>
         <div className="sales-summary-card">
           <span>Com atribuição</span>
           <strong>
-            {matched} <em>/ {props.rows.length}</em>
+            {summary?.matched ?? 0} <em>/ {summary?.total ?? 0}</em>
           </strong>
-          <small>
-            {props.rows.length
-              ? Math.round((matched / props.rows.length) * 100)
-              : 0}
-            % vinculados a anúncios
-          </small>
+          <small>{matchedRate}% vinculados a anúncios</small>
         </div>
         <div className="sales-summary-card">
           <span>Ticket médio</span>
           <strong>
-            {currency.format(
-              approved.length ? approvedAmount / approved.length : 0
-            )}
+            {summary?.averageTicket === null || !summary
+              ? "—"
+              : currency.format(summary.averageTicket)}
           </strong>
-          <small>Pedidos aprovados</small>
+          <small>Pedidos aprovados convertidos</small>
         </div>
       </div>
       <section className="panel sales-panel">
@@ -1926,7 +2768,7 @@ function SalesPage(props: SalesPageProps) {
             <div className="panel-kicker">TRANSAÇÕES</div>
             <h2>
               Pedidos recebidos{" "}
-              <span className="table-count">{props.rows.length}</span>
+              <span className="table-count">{props.total}</span>
             </h2>
           </div>
           <div className="table-tools sales-tools">
@@ -1934,7 +2776,7 @@ function SalesPage(props: SalesPageProps) {
               <Search size={15} />
               <input
                 aria-label="Buscar venda"
-                placeholder="Buscar por produto ou ID..."
+                placeholder="Buscar por produto, campanha ou ID..."
                 value={props.query}
                 onChange={(event) => props.setQuery(event.target.value)}
               />
@@ -1942,10 +2784,10 @@ function SalesPage(props: SalesPageProps) {
             <select
               className="inline-filter"
               aria-label="Filtrar gateway"
-              value={props.gatewayFilter}
               onChange={(event) =>
                 props.setGatewayFilter(event.target.value as Gateway)
               }
+              value={props.gatewayFilter}
             >
               <option>Todos os gateways</option>
               <option>Hotmart</option>
@@ -1954,22 +2796,30 @@ function SalesPage(props: SalesPageProps) {
           </div>
         </div>
         <div className="sales-filter-row">
-          <div className="period-switch">
+          <div className="period-switch" role="group" aria-label="Período">
             {([7, 14, 30] as Period[]).map((days) => (
               <button
                 key={days}
-                className={props.period === days ? "selected" : ""}
+                className={
+                  isPeriodSelected(props.dateRange, days) ? "selected" : ""
+                }
                 onClick={() => props.setPeriod(days)}
+                type="button"
               >
                 {days} dias
               </button>
             ))}
+            <DateRangeControl
+              className="sales-date-range"
+              onApply={props.onDateRangeApply}
+              value={props.dateRange}
+            />
           </div>
           <select
             className="inline-filter"
             aria-label="Filtrar conta de anúncio"
-            value={props.accountFilter}
             onChange={(event) => props.setAccountFilter(event.target.value)}
+            value={props.accountFilter}
           >
             <option value="all">Todas as contas</option>
             {props.accountOptions.map((account) => (
@@ -1981,112 +2831,163 @@ function SalesPage(props: SalesPageProps) {
           <select
             className="inline-filter"
             aria-label="Filtrar produto"
-            value={props.productFilter}
             onChange={(event) => props.setProductFilter(event.target.value)}
+            value={props.productFilter}
           >
             <option>Todos os produtos</option>
             {props.productOptions.map((product) => (
               <option key={product}>{product}</option>
             ))}
           </select>
+          <select
+            className="inline-filter"
+            aria-label="Filtrar status da venda"
+            onChange={(event) =>
+              props.setStatusFilter(event.target.value as SaleStatusFilter)
+            }
+            value={props.statusFilter}
+          >
+            <option value="all">Todos os status</option>
+            <option value="approved">Aprovadas</option>
+            <option value="refunded">Reembolsadas</option>
+            <option value="chargeback">Chargebacks</option>
+            <option value="pending">Aguardando</option>
+          </select>
+          <select
+            className="inline-filter"
+            aria-label="Filtrar atribuição"
+            onChange={(event) =>
+              props.setAttributionFilter(
+                event.target.value as SaleAttributionFilter
+              )
+            }
+            value={props.attributionFilter}
+          >
+            <option value="all">Toda atribuição</option>
+            <option value="matched">Atribuídas</option>
+            <option value="unmatched">Sem atribuição</option>
+          </select>
           <div className="sales-live-note">
             <span /> Atualizado sob demanda
           </div>
         </div>
-        <div className="table-scroll">
-          <table className="data-table sales-table">
-            <thead>
-              <tr>
-                <th>Transação</th>
-                <th>Produto</th>
-                <th>Gateway</th>
-                <th>Data</th>
-                <th>Valor</th>
-                <th>Status</th>
-                <th>Atribuição</th>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {props.rows.map((sale) => (
-                <tr key={sale.id}>
-                  <td>
-                    <strong className="transaction-id">{sale.id}</strong>
-                  </td>
-                  <td>
-                    <div className="product-cell">
-                      <span className="product-mini-icon">
-                        <ShoppingBag size={14} />
-                      </span>
-                      <strong>{sale.product}</strong>
-                    </div>
-                  </td>
-                  <td>
-                    <GatewayBadge gateway={sale.gateway} />
-                  </td>
-                  <td className="date-cell">{sale.date}</td>
-                  <td
-                    className={`numeric-cell ${sale.status === "Aprovada" ? "revenue-cell" : ""}`}
-                  >
-                    {sale.amountLabel ?? currency.format(sale.amount)}
-                  </td>
-                  <td>
-                    <SaleStatus status={sale.status} />
-                  </td>
-                  <td>
-                    <span
-                      className={`attribution-pill ${sale.matched ? "matched" : "unmatched"}`}
-                    >
-                      {sale.matched ? (
-                        <>
-                          <Link2 size={12} /> {sale.campaign}
-                        </>
-                      ) : (
-                        <>
-                          <span /> Sem atribuição
-                        </>
-                      )}
-                    </span>
-                  </td>
-                  <td>
-                    <button
-                      className="icon-button row-menu"
-                      aria-label={`Detalhes da transação ${sale.id}`}
-                    >
-                      <MoreHorizontal size={17} />
-                    </button>
-                  </td>
+        {props.error ? (
+          <div className="inline-error sales-error" role="alert">
+            <span>{props.error}</span>
+            <button onClick={props.onRetry} type="button">
+              Tentar novamente
+            </button>
+          </div>
+        ) : props.loading && !props.rows.length ? (
+          <div aria-live="polite" className="loading-state">
+            <RefreshCw className="spin" size={17} /> Carregando transações…
+          </div>
+        ) : props.rows.length ? (
+          <div className="table-scroll">
+            <table className="data-table sales-table">
+              <thead>
+                <tr>
+                  <th>Transação</th>
+                  <th>Produto</th>
+                  <th>Gateway</th>
+                  <th>Data</th>
+                  <th>Valor</th>
+                  <th>Status</th>
+                  <th>Atribuição</th>
+                  <th aria-label="Detalhes" />
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        {!props.rows.length && (
+              </thead>
+              <tbody>
+                {props.rows.map((sale) => (
+                  <tr key={sale.id}>
+                    <td>
+                      <strong className="transaction-id">{sale.id}</strong>
+                    </td>
+                    <td>
+                      <div className="product-cell">
+                        <span className="product-mini-icon">
+                          <ShoppingBag size={14} />
+                        </span>
+                        <strong>{sale.product}</strong>
+                      </div>
+                    </td>
+                    <td>
+                      <GatewayBadge gateway={sale.gateway} />
+                    </td>
+                    <td className="date-cell">{sale.date}</td>
+                    <td
+                      className={
+                        "numeric-cell " +
+                        (sale.status === "Aprovada" ? "revenue-cell" : "")
+                      }
+                    >
+                      {sale.amountLabel ?? currency.format(sale.amount)}
+                    </td>
+                    <td>
+                      <SaleStatus status={sale.status} />
+                    </td>
+                    <td>
+                      <span
+                        className={
+                          "attribution-pill " +
+                          (sale.matched ? "matched" : "unmatched")
+                        }
+                      >
+                        {sale.matched ? (
+                          <>
+                            <Link2 size={12} /> {sale.campaign}
+                          </>
+                        ) : (
+                          <>
+                            <span /> Sem atribuição
+                          </>
+                        )}
+                      </span>
+                    </td>
+                    <td>
+                      <button
+                        aria-label={"Abrir detalhes da transação " + sale.id}
+                        className="icon-button row-menu"
+                        onClick={() => props.onSelectSale(sale)}
+                        type="button"
+                      >
+                        <ExternalLink size={15} />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
           <div className="empty-state">
             <Search size={21} />
             <strong>Nenhuma venda encontrada</strong>
-            <span>Experimente outro produto, gateway ou termo de busca.</span>
+            <span>Experimente ajustar período, filtros ou busca.</span>
           </div>
         )}
         <div className="table-footer">
           <span>
-            Exibindo <strong>{props.rows.length}</strong>{" "}
+            Exibindo{" "}
+            <strong>
+              {firstRow}–{lastRow}
+            </strong>{" "}
+            de <strong>{props.total}</strong>{" "}
             {props.demo ? "transações demonstrativas" : "transações"}
           </span>
-          <div className="pagination">
-            <button disabled aria-label="Página anterior">
-              <ArrowLeft size={15} />
-            </button>
-            <button className="current-page">1</button>
-            <button disabled aria-label="Próxima página">
-              <ArrowRight size={15} />
-            </button>
-          </div>
+          <Pagination
+            label="vendas"
+            onChange={props.setPage}
+            page={props.page}
+            pageSize={25}
+            totalItems={props.total}
+          />
         </div>
       </section>
       <div className="disclaimer">
-        <Clock3 size={13} /> Receita considera compras aprovadas menos
-        reembolsos e chargebacks.
+        <Clock3 size={13} /> Receita aprovada em BRL considera apenas conversões
+        disponíveis. Reembolsos e chargebacks aparecem na lista e não entram no
+        total aprovado.
         {props.demo ? " Os valores do exemplo são fictícios." : ""}
       </div>
     </>
@@ -2097,10 +2998,12 @@ function IntegrationsPage({
   onSync,
   syncing,
   onToast,
+  onHelp,
 }: {
   onSync: () => void
   syncing: boolean
   onToast: (message: string) => void
+  onHelp: () => void
 }) {
   const [copyText, setCopyText] = useState("")
   const [credentialsProvider, setCredentialsProvider] = useState<
@@ -2410,11 +3313,8 @@ function IntegrationsPage({
         <div className="heading-actions">
           <button
             className="button button-secondary"
-            onClick={() =>
-              onToast(
-                "As conexões são configuradas pelo administrador do workspace."
-              )
-            }
+            onClick={onHelp}
+            type="button"
           >
             <CircleHelp size={16} /> Central de ajuda
           </button>
@@ -2607,7 +3507,11 @@ function IntegrationsPage({
               {savingWebhookSettings ? "Salvando…" : "Salvar tokens"}
             </button>
           </form>
-          <form className="workspace-config-card" onSubmit={changePassword}>
+          <form
+            className="workspace-config-card"
+            id="account-security"
+            onSubmit={changePassword}
+          >
             <div className="workspace-config-card-heading">
               <strong>Conta administrativa</strong>
               <span className="configured">Protegida</span>
@@ -2665,6 +3569,7 @@ function IntegrationsPage({
       </div>
       <div className="integration-grid">
         <IntegrationCard
+          id="meta-integration"
           provider="Meta Ads"
           description="Contas de anúncio, campanhas e métricas de entrega."
           logo="meta"
@@ -2865,6 +3770,7 @@ function IntegrationsPage({
 }
 
 function IntegrationCard({
+  id,
   provider,
   description,
   logo,
@@ -2873,6 +3779,7 @@ function IntegrationCard({
   action,
   onAction,
 }: {
+  id?: string
   provider: string
   description: string
   logo: string
@@ -2882,7 +3789,7 @@ function IntegrationCard({
   onAction: () => void
 }) {
   return (
-    <article className="integration-card">
+    <article className="integration-card" id={id}>
       <div className="integration-card-top">
         <ProviderLogo name={logo} />
         <span className="integration-badge">{badge}</span>
@@ -3121,19 +4028,64 @@ const uniqueProducts = [
   ...new Set(campaigns.map((campaign) => campaign.product)),
 ]
 
+function readCampaignColumns(): Record<CampaignColumn, boolean> {
+  const defaults: Record<CampaignColumn, boolean> = {
+    account: true,
+    spend: true,
+    sales: true,
+    revenue: true,
+    roas: true,
+    ctr: true,
+  }
+  if (typeof window === "undefined") return defaults
+  try {
+    const stored = JSON.parse(
+      window.localStorage.getItem("pulso:campaign-columns") ?? "{}"
+    ) as Partial<Record<CampaignColumn, unknown>>
+    for (const [key] of campaignColumnOptions) {
+      if (typeof stored[key] === "boolean") defaults[key] = stored[key]
+    }
+  } catch {
+    return defaults
+  }
+  return defaults
+}
+
+function downloadCsv(filename: string, headers: string[], rows: unknown[][]) {
+  const csv = [headers, ...rows]
+    .map((row) => row.map(csvCell).join(","))
+    .join("\n")
+  const url = URL.createObjectURL(
+    new Blob([`\uFEFF${csv}`], { type: "text/csv;charset=utf-8" })
+  )
+  const link = document.createElement("a")
+  link.href = url
+  link.download = `${filename}-${new Date().toISOString().slice(0, 10)}.csv`
+  link.click()
+  URL.revokeObjectURL(url)
+}
+
+function syncStatusLabel(status: SyncActivity["status"]) {
+  if (status === "queued") return "Na fila"
+  if (status === "running") return "Em andamento"
+  if (status === "completed") return "Concluída"
+  if (status === "partial") return "Concluída parcialmente"
+  return "Falhou"
+}
+
+function formatActivityDate(value: string) {
+  const date = new Date(value)
+  if (!Number.isFinite(date.getTime())) return "Data indisponível"
+  return new Intl.DateTimeFormat("pt-BR", {
+    dateStyle: "short",
+    timeStyle: "short",
+  }).format(date)
+}
+
 function pageTitle(page: Page) {
   if (page === "sales") return "Vendas"
   if (page === "integrations") return "Integrações"
   return "Visão geral"
-}
-
-function dateForDaysAgo(days: number) {
-  const date = new Date()
-  date.setDate(date.getDate() - days + 1)
-  const year = date.getFullYear()
-  const month = String(date.getMonth() + 1).padStart(2, "0")
-  const day = String(date.getDate()).padStart(2, "0")
-  return `${year}-${month}-${day}`
 }
 
 function readToastFromUrl() {
@@ -3147,19 +4099,35 @@ function readToastFromUrl() {
   return ""
 }
 
-function chartBoundary(period: Period, position: "start" | "middle" | "end") {
-  const daysAgo =
-    position === "start"
-      ? period
-      : position === "middle"
-        ? Math.ceil(period / 2)
-        : 1
-  const date = new Date()
-  date.setDate(date.getDate() - daysAgo + 1)
+function chartBoundary(range: DateRange, position: "start" | "middle" | "end") {
+  const date = new Date(`${range.from}T00:00:00Z`)
+  if (position === "end") date.setTime(Date.parse(`${range.to}T00:00:00Z`))
+  if (position === "middle")
+    date.setUTCDate(
+      date.getUTCDate() + Math.floor((daysBetween(range) - 1) / 2)
+    )
   return new Intl.DateTimeFormat("pt-BR", {
     day: "2-digit",
     month: "short",
+    timeZone: "UTC",
   }).format(date)
+}
+
+function isPeriodSelected(range: DateRange, days: number) {
+  const preset = dateRangeForDays(days)
+  return preset.from === range.from && preset.to === range.to
+}
+
+async function copyCampaignId(
+  campaignId: string,
+  onToast: (message: string) => void
+) {
+  try {
+    await navigator.clipboard.writeText(campaignId)
+    onToast("ID da campanha copiado.")
+  } catch {
+    onToast("Não foi possível copiar o ID.")
+  }
 }
 
 function csvCell(value: unknown) {

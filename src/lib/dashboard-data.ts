@@ -26,6 +26,7 @@ export type Campaign = {
 
 export type Sale = {
   id: string
+  accountId?: string
   date: string
   product: string
   buyer: string
@@ -147,6 +148,7 @@ export const campaigns: Campaign[] = [
 export const sales: Sale[] = [
   {
     id: "HP00294710",
+    accountId: "act_1029384756",
     date: "Hoje, 10:42",
     product: "Método Aurora",
     buyer: "Marina R.",
@@ -158,6 +160,7 @@ export const sales: Sale[] = [
   },
   {
     id: "KW00831294",
+    accountId: "act_5647382910",
     date: "Hoje, 10:18",
     product: "Desafio 21 dias",
     buyer: "Carlos M.",
@@ -169,6 +172,7 @@ export const sales: Sale[] = [
   },
   {
     id: "HP00294698",
+    accountId: "act_1029384756",
     date: "Hoje, 09:56",
     product: "Planner financeiro",
     buyer: "Ana C.",
@@ -180,6 +184,7 @@ export const sales: Sale[] = [
   },
   {
     id: "KW00831261",
+    accountId: "act_9182736450",
     date: "Hoje, 09:31",
     product: "Inglês sem medo",
     buyer: "Rafael G.",
@@ -191,6 +196,7 @@ export const sales: Sale[] = [
   },
   {
     id: "HP00294642",
+    accountId: "act_1029384756",
     date: "Hoje, 09:02",
     product: "Método Aurora",
     buyer: "Joana P.",
@@ -202,6 +208,7 @@ export const sales: Sale[] = [
   },
   {
     id: "KW00831190",
+    accountId: "act_5647382910",
     date: "Hoje, 08:44",
     product: "Desafio 21 dias",
     buyer: "Pedro F.",
@@ -213,6 +220,7 @@ export const sales: Sale[] = [
   },
   {
     id: "HP00294588",
+    accountId: "act_5647382910",
     date: "Ontem, 22:17",
     product: "Ebook receitas leves",
     buyer: "Luiza B.",
@@ -224,6 +232,7 @@ export const sales: Sale[] = [
   },
   {
     id: "KW00831134",
+    accountId: "act_9182736450",
     date: "Ontem, 21:50",
     product: "Inglês sem medo",
     buyer: "Felipe A.",
@@ -235,6 +244,7 @@ export const sales: Sale[] = [
   },
   {
     id: "HP00294521",
+    accountId: "act_1029384756",
     date: "Ontem, 20:26",
     product: "Método Aurora",
     buyer: "Beatriz L.",
@@ -246,6 +256,7 @@ export const sales: Sale[] = [
   },
   {
     id: "KW00831096",
+    accountId: "act_1029384756",
     date: "Ontem, 19:43",
     product: "Planner financeiro",
     buyer: "Sem identificação",
