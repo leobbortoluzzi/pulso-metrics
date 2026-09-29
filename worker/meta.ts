@@ -286,9 +286,31 @@ type Insight = {
   spend?: string
   impressions?: string
   clicks?: string
+  inline_link_clicks?: string | number
+  actions?: Array<{
+    action_type?: string
+    value?: string | number
+  }>
   ctr?: string
   cpc?: string
   cpm?: string
+}
+
+function metricCount(value: unknown) {
+  if (typeof value !== "number" && typeof value !== "string") return null
+  if (typeof value === "string" && !value.trim()) return null
+  const count = Number(value)
+  return Number.isFinite(count) && count >= 0 ? count : null
+}
+
+function actionCount(actions: Insight["actions"], actionTypes: string[]) {
+  if (!actions) return null
+  for (const actionType of actionTypes) {
+    const action = actions.find((item) => item.action_type === actionType)
+    const count = metricCount(action?.value)
+    if (count !== null) return count
+  }
+  return null
 }
 
 export async function consumeMetaSync(
@@ -334,7 +356,7 @@ export async function consumeMetaSync(
   )
   url.searchParams.set(
     "fields",
-    "account_id,date_start,campaign_id,campaign_name,adset_id,adset_name,ad_id,ad_name,spend,impressions,clicks,ctr,cpc,cpm"
+    "account_id,date_start,campaign_id,campaign_name,adset_id,adset_name,ad_id,ad_name,spend,impressions,clicks,inline_link_clicks,actions,ctr,cpc,cpm"
   )
   url.searchParams.set("limit", "500")
   url.searchParams.set("access_token", accessToken)
@@ -353,6 +375,23 @@ export async function consumeMetaSync(
           .filter((item) => item.date_start && item.campaign_id)
           .map(async (item) => {
             const spend = Number(item.spend ?? 0)
+            const linkClicks =
+              metricCount(item.inline_link_clicks) ??
+              actionCount(item.actions, ["link_click"]) ??
+              Number(item.clicks ?? 0)
+            const landingPageViews = actionCount(item.actions, [
+              "landing_page_view",
+              "onsite_conversion.landing_page_view",
+              "omni_landing_page_view",
+            ])
+            const checkouts = actionCount(item.actions, [
+              "offsite_conversion.fb_pixel_initiate_checkout",
+              "offsite_conversion.initiate_checkout",
+              "onsite_conversion.initiate_checkout",
+              "initiate_checkout",
+              "fb_mobile_initiated_checkout",
+              "omni_initiated_checkout",
+            ])
             const fx =
               account.currency === "BRL"
                 ? { selling_rate: 1 }
@@ -365,12 +404,16 @@ export async function consumeMetaSync(
             return env.DB.prepare(
               `INSERT INTO ad_metrics (
         account_id, date, campaign_id, campaign_name, adset_id, adset_name, ad_id, ad_name,
-        spend, spend_brl, impressions, clicks, ctr, cpc, cpm, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+        spend, spend_brl, impressions, clicks, ctr, cpc, cpm, link_clicks,
+        landing_page_views, checkouts, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
       ON CONFLICT(account_id, date, campaign_id, adset_id, ad_id) DO UPDATE SET
         campaign_name = excluded.campaign_name, adset_name = excluded.adset_name, ad_name = excluded.ad_name,
         spend = excluded.spend, spend_brl = excluded.spend_brl, impressions = excluded.impressions, clicks = excluded.clicks,
         ctr = excluded.ctr, cpc = excluded.cpc, cpm = excluded.cpm,
+        link_clicks = excluded.link_clicks,
+        landing_page_views = excluded.landing_page_views,
+        checkouts = excluded.checkouts,
         updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`
             ).bind(
               message.accountId,
@@ -387,7 +430,10 @@ export async function consumeMetaSync(
               Number(item.clicks ?? 0),
               Number(item.ctr ?? 0),
               Number(item.cpc ?? 0),
-              Number(item.cpm ?? 0)
+              Number(item.cpm ?? 0),
+              linkClicks,
+              landingPageViews,
+              checkouts
             )
           })
       )

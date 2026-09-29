@@ -468,6 +468,78 @@ app.post("/api/meta/sync", async (context) => {
   }
 })
 
+app.get("/api/funnel", async (context) => {
+  const from = context.req.query("from") ?? ""
+  const to = context.req.query("to") ?? ""
+  if (!isDate(from) || !isDate(to) || from > to)
+    return context.json({ error: "Informe datas válidas em from e to." }, 400)
+  if (!isDateRangeWithinLimit(from, to)) {
+    return context.json(
+      {
+        error: `O funil aceita intervalos de até ${MAX_DATE_RANGE_DAYS} dias.`,
+      },
+      400
+    )
+  }
+
+  const accountIds = (context.req.queries("accountIds") ?? [])
+    .flatMap((entry) => entry.split(","))
+    .filter(Boolean)
+  if (accountIds.length > 100)
+    return context.json({ error: "O filtro aceita até 100 contas." }, 400)
+
+  const metricClauses = ["date BETWEEN ? AND ?"]
+  const metricValues: Array<string> = [from, to]
+  if (accountIds.length) {
+    metricClauses.push(`account_id IN (${accountIds.map(() => "?").join(",")})`)
+    metricValues.push(...accountIds)
+  }
+
+  const salesClauses = [
+    "attribution_date BETWEEN ? AND ?",
+    "status IN ('approved', 'refunded', 'chargeback')",
+    "campaign_id IS NOT NULL",
+    "account_id IS NOT NULL",
+  ]
+  const salesValues: Array<string> = [from, to]
+  if (accountIds.length) {
+    salesClauses.push(`account_id IN (${accountIds.map(() => "?").join(",")})`)
+    salesValues.push(...accountIds)
+  }
+  const [metrics, purchases] = await Promise.all([
+    context.env.DB.prepare(
+      `SELECT COALESCE(SUM(impressions), 0) AS impressions,
+        COALESCE(SUM(COALESCE(link_clicks, clicks)), 0) AS clicks,
+        SUM(landing_page_views) AS landing_page_views,
+        SUM(checkouts) AS checkouts
+      FROM ad_metrics WHERE ${metricClauses.join(" AND ")}`
+    )
+      .bind(...metricValues)
+      .first<{
+        impressions: number
+        clicks: number
+        landing_page_views: number | null
+        checkouts: number | null
+      }>(),
+    context.env.DB.prepare(
+      `SELECT COUNT(*) AS total FROM sales WHERE ${salesClauses.join(" AND ")}`
+    )
+      .bind(...salesValues)
+      .first<{ total: number }>(),
+  ])
+
+  return context.json({
+    source: "live",
+    funnel: {
+      impressions: metrics?.impressions ?? 0,
+      clicks: metrics?.clicks ?? 0,
+      landingPageViews: metrics?.landing_page_views ?? null,
+      checkouts: metrics?.checkouts ?? null,
+      purchases: purchases?.total ?? 0,
+    },
+  })
+})
+
 app.get("/api/sync/recent", async (context) => {
   const requestedLimit = Number(context.req.query("limit") ?? 5)
   const limit = Number.isFinite(requestedLimit)

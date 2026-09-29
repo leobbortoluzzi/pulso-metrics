@@ -125,7 +125,7 @@ import {
   type Sale,
 } from "@/lib/dashboard-data"
 
-type Page = "overview" | "campaigns" | "sales" | "integrations"
+type Page = "overview" | "campaigns" | "funnel" | "sales" | "integrations"
 type Period = number
 const periodOptions: Period[] = [7, 14, 30, 90, 120]
 type Level = "Campanhas" | "Conjuntos" | "Anúncios"
@@ -163,6 +163,14 @@ type DashboardTotals = {
   roi: number | null
 }
 
+type FunnelMetrics = {
+  impressions: number
+  clicks: number
+  landingPageViews: number | null
+  checkouts: number | null
+  purchases: number
+}
+
 type SyncActivity = {
   id: string
   type: "meta" | "gateways"
@@ -196,6 +204,13 @@ const preciseCurrency = new Intl.NumberFormat("pt-BR", {
 })
 
 const numberFormat = new Intl.NumberFormat("pt-BR")
+const demoFunnelMetrics: FunnelMetrics = {
+  impressions: 184_230,
+  clicks: 5_412,
+  landingPageViews: 4_625,
+  checkouts: 872,
+  purchases: 149,
+}
 const campaignColumnOptions: Array<[CampaignColumn, string]> = [
   ["account", "Conta de anúncio"],
   ["spend", "Investimento"],
@@ -274,6 +289,46 @@ function FilterSelect({
   )
 }
 
+function PeriodSelector({
+  value,
+  period,
+  onPeriodChange,
+  onDateRangeApply,
+  ariaLabel,
+  dateRangeClassName,
+}: {
+  value: DateRange
+  period: Period
+  onPeriodChange: (period: Period) => void
+  onDateRangeApply: (range: DateRange) => void
+  ariaLabel: string
+  dateRangeClassName?: string
+}) {
+  return (
+    <div className="period-switch">
+      <ToggleGroup
+        aria-label={ariaLabel}
+        className="period-toggle"
+        value={isPeriodSelected(value, period) ? [String(period)] : []}
+        onValueChange={(selected) => {
+          if (selected[0]) onPeriodChange(Number(selected[0]))
+        }}
+      >
+        {periodOptions.map((days) => (
+          <ToggleGroupItem key={days} value={String(days)}>
+            {days} dias
+          </ToggleGroupItem>
+        ))}
+      </ToggleGroup>
+      <DateRangeControl
+        className={dateRangeClassName}
+        onApply={onDateRangeApply}
+        value={value}
+      />
+    </div>
+  )
+}
+
 function App() {
   const [authState, setAuthState] = useState<
     "checking" | "setup" | "demo" | "authenticated" | "required" | "error"
@@ -320,6 +375,9 @@ function App() {
   const [toast, setToast] = useState(readToastFromUrl)
   const [adAccountList, setAdAccountList] = useState(accounts)
   const [liveCampaigns, setLiveCampaigns] = useState<Campaign[] | null>(null)
+  const [liveFunnel, setLiveFunnel] = useState<FunnelMetrics | null>(null)
+  const [funnelLoading, setFunnelLoading] = useState(false)
+  const [funnelError, setFunnelError] = useState("")
   const [liveSales, setLiveSales] = useState<Sale[] | null>(null)
   const [liveSummary, setLiveSummary] = useState<{
     spend: number
@@ -950,6 +1008,55 @@ function App() {
     gatewayFilter,
     level,
     productFilter,
+  ])
+
+  useEffect(() => {
+    if (page !== "funnel" || authState !== "authenticated") return
+
+    const controller = new AbortController()
+    const params = new URLSearchParams({
+      from: dateRange.from,
+      to: dateRange.to,
+    })
+    if (accountFilter !== "all") params.set("accountIds", accountFilter)
+
+    async function loadFunnel() {
+      setFunnelLoading(true)
+      setFunnelError("")
+      setLiveFunnel(null)
+      try {
+        const response = await fetch(`/api/funnel?${params}`, {
+          signal: controller.signal,
+        })
+        const result = (await response.json().catch(() => ({}))) as {
+          error?: string
+          funnel?: FunnelMetrics
+        }
+        if (!response.ok || !result.funnel)
+          throw new Error(result.error || "Não foi possível carregar o funil.")
+        if (!controller.signal.aborted) setLiveFunnel(result.funnel)
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          setFunnelError(
+            error instanceof Error
+              ? error.message
+              : "Não foi possível carregar o funil."
+          )
+        }
+      } finally {
+        if (!controller.signal.aborted) setFunnelLoading(false)
+      }
+    }
+
+    void loadFunnel()
+    return () => controller.abort()
+  }, [
+    accountFilter,
+    authState,
+    dataRefresh,
+    dateRange.from,
+    dateRange.to,
+    page,
   ])
 
   useEffect(() => {
@@ -1593,6 +1700,14 @@ function App() {
             <span className="nav-shortcut">⌘ 2</span>
           </button>
           <button
+            className={`nav-item ${page === "funnel" ? "active" : ""}`}
+            onClick={() => navigate("funnel")}
+            aria-current={page === "funnel" ? "page" : undefined}
+          >
+            <Filter size={18} />
+            <span>Funil</span>
+          </button>
+          <button
             className={`nav-item ${page === "sales" ? "active" : ""}`}
             onClick={() => navigate("sales")}
             aria-current={page === "sales" ? "page" : undefined}
@@ -1885,6 +2000,25 @@ function App() {
               onRetry={() => setDataRefresh((value) => value + 1)}
             />
           )}
+          {page === "funnel" && (
+            <FunnelPage
+              period={period}
+              setPeriod={updatePeriod}
+              dateRange={dateRange}
+              onDateRangeApply={applyDateRange}
+              metrics={
+                authState === "authenticated" ? liveFunnel : demoFunnelMetrics
+              }
+              demo={authState === "demo"}
+              loading={funnelLoading}
+              error={funnelError}
+              onRetry={() => setDataRefresh((value) => value + 1)}
+              onSync={requestSync}
+              onReconcile={requestReconciliation}
+              syncing={syncing}
+              reconciling={reconciling}
+            />
+          )}
           {page === "sales" && (
             <SalesPage
               period={period}
@@ -2052,6 +2186,242 @@ type CampaignsPageProps = {
   onRetry: () => void
 }
 
+type FunnelPageProps = {
+  period: Period
+  setPeriod: (period: Period) => void
+  dateRange: DateRange
+  onDateRangeApply: (range: DateRange) => void
+  metrics: FunnelMetrics | null
+  demo: boolean
+  loading: boolean
+  error: string
+  onRetry: () => void
+  onSync: () => void
+  onReconcile: () => void
+  syncing: boolean
+  reconciling: boolean
+}
+
+const funnelStageLabels = [
+  { title: "Viu o anúncio", label: "Impressões", source: "Meta Ads" },
+  { title: "Clicou", label: "Cliques", source: "Meta Ads" },
+  {
+    title: "Viu a página",
+    label: "Visualizações da página",
+    source: "Evento PageView",
+  },
+  {
+    title: "Chegou ao checkout",
+    label: "Checkouts iniciados",
+    source: "Evento InitiateCheckout",
+  },
+  {
+    title: "Efetuou a compra",
+    label: "Compras atribuídas",
+    source: "Hotmart / Kiwify",
+  },
+] as const
+
+function FunnelPage(props: FunnelPageProps) {
+  const values: Array<number | null> = props.metrics
+    ? [
+        props.metrics.impressions,
+        props.metrics.clicks,
+        props.metrics.landingPageViews,
+        props.metrics.checkouts,
+        props.metrics.purchases,
+      ]
+    : [null, null, null, null, null]
+  const impressions = values[0] ?? 0
+  const pixelEventsMissing =
+    props.metrics !== null &&
+    (props.metrics.landingPageViews === null ||
+      props.metrics.landingPageViews === 0 ||
+      props.metrics.checkouts === null ||
+      props.metrics.checkouts === 0)
+
+  return (
+    <>
+      <div className="page-heading">
+        <div>
+          <div className="eyebrow">
+            <span className="eyebrow-line" /> CONVERSÃO{" "}
+            <span className="eyebrow-period">
+              · {formatRange(props.dateRange)}
+            </span>
+          </div>
+          <h1>
+            Funil<span className="heading-period">.</span>
+          </h1>
+          <p>Veja em quais etapas o tráfego avança até virar compra.</p>
+        </div>
+        <div className="heading-actions funnel-heading-actions">
+          <Button
+            className="dashboard-action dashboard-action-secondary"
+            onClick={props.onReconcile}
+            disabled={props.syncing || props.reconciling}
+            size="lg"
+            variant="outline"
+          >
+            <RefreshCw
+              className={props.reconciling ? "spin" : ""}
+              data-icon="inline-start"
+            />
+            {props.reconciling ? "Buscando vendas…" : "Reconciliar vendas"}
+          </Button>
+          <Button
+            className="dashboard-action"
+            onClick={props.onSync}
+            disabled={props.syncing || props.reconciling}
+            size="lg"
+          >
+            <RefreshCw
+              className={props.syncing ? "spin" : ""}
+              data-icon="inline-start"
+            />
+            {props.syncing ? "Atualizando…" : "Atualizar anúncios"}
+          </Button>
+        </div>
+      </div>
+
+      {props.demo && (
+        <Alert className="demo-notice">
+          <span className="notice-spark">
+            <Sparkles size={15} />
+          </span>
+          <div className="demo-notice-copy">
+            <AlertTitle>Funil de demonstração</AlertTitle>
+            <AlertDescription>
+              Os números exibidos são fictícios e servem apenas como exemplo.
+            </AlertDescription>
+          </div>
+          <AlertAction className="demo-notice-action">
+            <Button
+              onClick={() =>
+                window.dispatchEvent(new CustomEvent("navigate-integrations"))
+              }
+              size="sm"
+              variant="link"
+            >
+              Configurar integrações <ArrowRight data-icon="inline-end" />
+            </Button>
+          </AlertAction>
+        </Alert>
+      )}
+
+      <div className="filter-bar funnel-date-filter">
+        <PeriodSelector
+          ariaLabel="Período do funil"
+          onDateRangeApply={props.onDateRangeApply}
+          onPeriodChange={props.setPeriod}
+          period={props.period}
+          value={props.dateRange}
+        />
+      </div>
+
+      {props.error && (
+        <Alert className="inline-error" variant="destructive">
+          <AlertTitle>Não foi possível carregar o funil</AlertTitle>
+          <AlertDescription>{props.error}</AlertDescription>
+          <AlertAction>
+            <Button onClick={props.onRetry} size="sm" variant="outline">
+              Tentar novamente
+            </Button>
+          </AlertAction>
+        </Alert>
+      )}
+
+      <Card className="funnel-card">
+        <CardHeader>
+          <CardTitle>Etapas do funil</CardTitle>
+          <CardDescription>
+            A porcentagem principal mostra a conversão em relação à etapa
+            anterior.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <ol className="funnel-stage-list" aria-label="Etapas de conversão">
+            {funnelStageLabels.map((stage, index) => {
+              const current = values[index] ?? null
+              const previous = index > 0 ? (values[index - 1] ?? null) : null
+              const conversion =
+                index > 0 ? funnelConversion(current, previous) : null
+              const overall = funnelConversion(current, impressions)
+              const barWidth =
+                current === null || impressions <= 0
+                  ? 0
+                  : Math.min((current / impressions) * 100, 100)
+              const countLabel =
+                props.loading && !props.metrics
+                  ? "Carregando…"
+                  : current === null
+                    ? "—"
+                    : numberFormat.format(current)
+
+              return (
+                <li key={stage.title}>
+                  <Card className="funnel-stage-card">
+                    <CardHeader>
+                      <div>
+                        <CardDescription>
+                          ETAPA {String(index + 1).padStart(2, "0")}
+                        </CardDescription>
+                        <CardTitle>{stage.title}</CardTitle>
+                      </div>
+                      <Badge variant="secondary">
+                        {index === 0
+                          ? impressions > 0
+                            ? "Base"
+                            : "—"
+                          : current === null
+                            ? "Sem dado"
+                            : `${formatFunnelPercent(conversion)} etapa anterior`}
+                      </Badge>
+                    </CardHeader>
+                    <CardContent>
+                      <strong className="funnel-stage-count">
+                        {countLabel}
+                      </strong>
+                      <span className="funnel-stage-label">{stage.label}</span>
+                      <div className="funnel-stage-track" aria-hidden="true">
+                        <span style={{ width: `${barWidth}%` }} />
+                      </div>
+                      <div className="funnel-stage-meta">
+                        <span>{stage.source}</span>
+                        {index === 0 ? (
+                          <span>{impressions > 0 ? "100% do funil" : "—"}</span>
+                        ) : (
+                          <span>{formatFunnelPercent(overall)} do topo</span>
+                        )}
+                      </div>
+                    </CardContent>
+                  </Card>
+                </li>
+              )
+            })}
+          </ol>
+        </CardContent>
+      </Card>
+
+      <Alert className="funnel-source-note">
+        <AlertTitle>
+          {pixelEventsMissing
+            ? "Não há eventos de página e checkout neste período"
+            : "De onde vêm os números"}
+        </AlertTitle>
+        <AlertDescription>
+          Impressões e cliques vêm da Meta. Visualização de página e início de
+          checkout dependem dos eventos <code>PageView</code> e{" "}
+          <code>InitiateCheckout</code> do Pixel. Compras vêm das vendas
+          atribuídas da Hotmart e Kiwify; elas precisam ter IDs de campanha e
+          vínculo com uma conta Meta. Configure os eventos no Pixel e atualize
+          os anúncios se esperava ver essas etapas neste período.
+        </AlertDescription>
+      </Alert>
+    </>
+  )
+}
+
 function OverviewPage(props: OverviewPageProps) {
   const accountName = props.accountOptions.find(
     (account) => account.id === props.accountFilter
@@ -2156,30 +2526,13 @@ function OverviewPage(props: OverviewPageProps) {
       )}
 
       <div className="filter-bar">
-        <div className="period-switch">
-          <ToggleGroup
-            className="period-toggle"
-            value={
-              isPeriodSelected(props.dateRange, props.period)
-                ? [String(props.period)]
-                : []
-            }
-            onValueChange={(selected) => {
-              if (selected[0]) props.setPeriod(Number(selected[0]))
-            }}
-            aria-label="Período"
-          >
-            {periodOptions.map((days) => (
-              <ToggleGroupItem key={days} value={String(days)}>
-                {days} dias
-              </ToggleGroupItem>
-            ))}
-          </ToggleGroup>
-          <DateRangeControl
-            onApply={props.onDateRangeApply}
-            value={props.dateRange}
-          />
-        </div>
+        <PeriodSelector
+          ariaLabel="Período"
+          onDateRangeApply={props.onDateRangeApply}
+          onPeriodChange={props.setPeriod}
+          period={props.period}
+          value={props.dateRange}
+        />
         <div className="filter-divider" />
         <div className="select-filter">
           <span>Conta</span>
@@ -2705,6 +3058,16 @@ function CampaignsPage(props: CampaignsPageProps) {
         </Alert>
       )}
 
+      <div className="filter-bar campaign-date-filter">
+        <PeriodSelector
+          ariaLabel="Período das campanhas"
+          onDateRangeApply={props.onDateRangeApply}
+          onPeriodChange={props.setPeriod}
+          period={props.period}
+          value={props.dateRange}
+        />
+      </div>
+
       <section className="campaign-summary-grid" aria-label="Resumo da seleção">
         <CampaignSummaryCard
           label="Entidades"
@@ -2741,30 +3104,6 @@ function CampaignsPage(props: CampaignsPageProps) {
           <strong>Filtrar resultados</strong>
         </div>
         <div className="campaign-filters">
-          <div className="campaign-period-filter">
-            <ToggleGroup
-              className="period-toggle"
-              value={
-                isPeriodSelected(props.dateRange, props.period)
-                  ? [String(props.period)]
-                  : []
-              }
-              onValueChange={(selected) => {
-                if (selected[0]) props.setPeriod(Number(selected[0]))
-              }}
-              aria-label="Período das campanhas"
-            >
-              {periodOptions.map((days) => (
-                <ToggleGroupItem key={days} value={String(days)}>
-                  {days} dias
-                </ToggleGroupItem>
-              ))}
-            </ToggleGroup>
-            <DateRangeControl
-              onApply={props.onDateRangeApply}
-              value={props.dateRange}
-            />
-          </div>
           <FilterSelect
             ariaLabel="Filtrar campanhas por conta"
             value={props.accountFilter}
@@ -3594,31 +3933,14 @@ function SalesPage(props: SalesPageProps) {
         </CardHeader>
         <CardContent className="sales-panel-content">
           <div className="sales-filter-row">
-            <div className="period-switch">
-              <ToggleGroup
-                aria-label="Período"
-                className="period-toggle"
-                onValueChange={(selected) => {
-                  if (selected[0]) props.setPeriod(Number(selected[0]))
-                }}
-                value={
-                  isPeriodSelected(props.dateRange, props.period)
-                    ? [String(props.period)]
-                    : []
-                }
-              >
-                {periodOptions.map((days) => (
-                  <ToggleGroupItem key={days} value={String(days)}>
-                    {days} dias
-                  </ToggleGroupItem>
-                ))}
-              </ToggleGroup>
-              <DateRangeControl
-                className="sales-date-range"
-                onApply={props.onDateRangeApply}
-                value={props.dateRange}
-              />
-            </div>
+            <PeriodSelector
+              ariaLabel="Período"
+              dateRangeClassName="sales-date-range"
+              onDateRangeApply={props.onDateRangeApply}
+              onPeriodChange={props.setPeriod}
+              period={props.period}
+              value={props.dateRange}
+            />
             <FilterSelect
               className="inline-filter"
               ariaLabel="Filtrar conta de anúncio"
@@ -4908,6 +5230,7 @@ function formatActivityDate(value: string) {
 
 function pageTitle(page: Page) {
   if (page === "campaigns") return "Campanhas"
+  if (page === "funnel") return "Funil"
   if (page === "sales") return "Vendas"
   if (page === "integrations") return "Integrações"
   return "Visão geral"
@@ -4948,6 +5271,15 @@ function formatPercent(value: number) {
     maximumFractionDigits: 1,
     minimumFractionDigits: 1,
   }).format(value)
+}
+
+function funnelConversion(current: number | null, previous: number | null) {
+  if (current === null || previous === null || previous <= 0) return null
+  return (current / previous) * 100
+}
+
+function formatFunnelPercent(value: number | null) {
+  return value === null ? "—" : `${formatPercent(value)}%`
 }
 
 async function copyCampaignId(

@@ -67,6 +67,13 @@ IDs, use os parâmetros da Meta `utm_campaign={{campaign.id}}`,
 `utm_term={{adset.id}}` e `utm_content={{ad.id}}`; a origem e o meio podem ser
 preenchidos como `utm_source` e `utm_medium`.
 
+Na aba **Funil**, impressões e cliques vêm dos relatórios da Meta. Para medir
+visualizações de página e início de checkout, configure os eventos `PageView` e
+`InitiateCheckout` do Pixel da Meta na página e no checkout. A etapa de compras
+usa transações dos gateways com os IDs de campanha atribuídos; vendas sem esses
+IDs ou sem vínculo com uma conta Meta não entram no funil por campanha. Após
+configurar o Pixel, atualize os anúncios para importar os eventos do período.
+
 As consultas à Meta e aos gateways rodam somente ao acionar atualização ou
 reconciliação. A conversão de moedas usa a cotação de venda PTAX; vendas e
 métricas sem cotação ficam pendentes até a fila obter uma cotação válida.
