@@ -2,7 +2,6 @@ export type AdAccount = {
   id: string
   name: string
   initials: string
-  color: string
   timezone: string
 }
 
@@ -43,21 +42,18 @@ export const accounts: AdAccount[] = [
     id: "act_1029384756",
     name: "Aurora Digital",
     initials: "AD",
-    color: "#dcece4",
     timezone: "America/Sao_Paulo",
   },
   {
     id: "act_5647382910",
     name: "Crescer Mais",
     initials: "CM",
-    color: "#eee7d7",
     timezone: "America/Sao_Paulo",
   },
   {
     id: "act_9182736450",
     name: "Projeto Leve",
     initials: "PL",
-    color: "#e6e2f0",
     timezone: "America/Fortaleza",
   },
 ]

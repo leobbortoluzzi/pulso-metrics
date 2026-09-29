@@ -1,5 +1,5 @@
 import { Hono, type Context } from "hono"
-import { calculatePerformance } from "../src/lib/metrics"
+import { calculateNetPerformance } from "../src/lib/metrics"
 import {
   isDateRangeWithinLimit,
   MAX_DATE_RANGE_DAYS,
@@ -68,6 +68,10 @@ type SalesAggregate = {
   ad_id: string | null
   revenue: number
   orders: number
+  refunded_revenue: number
+  refunded_orders: number
+  chargeback_revenue: number
+  chargeback_orders: number
 }
 
 const app = new Hono<{ Bindings: Env }>()
@@ -538,7 +542,7 @@ app.get("/api/dashboard", async (context) => {
     const sale = salesByKey.get(metricKey(metric, level))
     const spend = metric.spend
     const revenue = sale?.revenue ?? 0
-    const performance = calculatePerformance(spend, revenue)
+    const performance = calculateNetPerformance(spend, revenue)
     return {
       id:
         level === "campaign"
@@ -578,7 +582,14 @@ app.get("/api/dashboard", async (context) => {
     (sum, sale) => sum + sale.revenue,
     0
   )
-  const performance = calculatePerformance(totalSpend, attributedRevenue)
+  const attributedPerformance = calculateNetPerformance(
+    totalSpend,
+    attributedRevenue
+  )
+  const headlinePerformance = calculateNetPerformance(
+    totalSpend,
+    summarySales.netRevenue
+  )
   const unmatched = await countUnmatchedSales(
     context.env.DB,
     from,
@@ -601,10 +612,22 @@ app.get("/api/dashboard", async (context) => {
     from,
     to,
     summary: {
-      ...performance,
+      ...attributedPerformance,
       revenue: attributedRevenue,
-      allNetRevenue: summarySales.revenue,
-      sales: summarySales.orders,
+      allNetRevenue: summarySales.netRevenue,
+      allNetProfit: headlinePerformance.profit,
+      allNetRoas: headlinePerformance.roas,
+      allNetRoi: headlinePerformance.roi,
+      adTax: headlinePerformance.adTax,
+      productTax: headlinePerformance.productTax,
+      approvedRevenue: summarySales.approvedRevenue,
+      refundedRevenue: summarySales.refundedRevenue,
+      chargebackRevenue: summarySales.chargebackRevenue,
+      sales: summarySales.approvedOrders,
+      refundedOrders: summarySales.refundedOrders,
+      chargebackOrders: summarySales.chargebackOrders,
+      refundRate: summarySales.refundRate,
+      arpu: summarySales.arpu,
       impressions: metrics.reduce((sum, row) => sum + row.impressions, 0),
       clicks: metrics.reduce((sum, row) => sum + row.clicks, 0),
       attributedSales: attributedSales.reduce(
@@ -812,6 +835,12 @@ async function loadMetricRows(
       : level === "adset"
         ? "m.account_id, m.campaign_id, m.adset_id"
         : "m.account_id, m.campaign_id, m.adset_id, m.ad_id"
+  const entityFilter =
+    level === "campaign"
+      ? "AND m.campaign_id IS NOT NULL"
+      : level === "adset"
+        ? "AND m.campaign_id IS NOT NULL AND m.adset_id IS NOT NULL"
+        : "AND m.campaign_id IS NOT NULL AND m.adset_id IS NOT NULL AND m.ad_id IS NOT NULL"
   const sql = `SELECT ${selectedIds},
     a.name AS account_name,
     MAX(m.campaign_name) AS campaign_name,
@@ -822,7 +851,7 @@ async function loadMetricRows(
     SUM(m.impressions) AS impressions,
     SUM(m.clicks) AS clicks
     FROM ad_metrics m JOIN ad_accounts a ON a.id = m.account_id
-    WHERE m.date BETWEEN ? AND ? ${accountFilter}
+    WHERE m.date BETWEEN ? AND ? ${accountFilter} ${entityFilter}
     GROUP BY ${selectedIds}, a.name ORDER BY spend DESC LIMIT 500`
   const result = await db
     .prepare(sql)
@@ -842,7 +871,6 @@ async function loadAttributedSales(
 ) {
   const clauses = [
     "attribution_date BETWEEN ? AND ?",
-    "status = 'approved'",
     "amount_brl IS NOT NULL",
     "campaign_id IS NOT NULL",
   ]
@@ -867,7 +895,15 @@ async function loadAttributedSales(
         : "account_id, campaign_id, adset_id, ad_id"
   const result = await db
     .prepare(
-      `SELECT ${keys}, SUM(amount_brl) AS revenue, COUNT(*) AS orders FROM sales WHERE ${clauses.join(" AND ")} GROUP BY ${keys}`
+      `SELECT ${keys},
+        SUM(CASE WHEN status = 'approved' THEN amount_brl ELSE 0 END)
+          - SUM(CASE WHEN status IN ('refunded', 'chargeback') THEN amount_brl ELSE 0 END) AS revenue,
+        SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) AS orders,
+        SUM(CASE WHEN status = 'refunded' THEN amount_brl ELSE 0 END) AS refunded_revenue,
+        SUM(CASE WHEN status = 'refunded' THEN 1 ELSE 0 END) AS refunded_orders,
+        SUM(CASE WHEN status = 'chargeback' THEN amount_brl ELSE 0 END) AS chargeback_revenue,
+        SUM(CASE WHEN status = 'chargeback' THEN 1 ELSE 0 END) AS chargeback_orders
+      FROM sales WHERE ${clauses.join(" AND ")} GROUP BY ${keys}`
     )
     .bind(...values)
     .all<SalesAggregate>()
@@ -882,12 +918,10 @@ async function loadSalesSummary(
   gateway: string | null,
   product: string
 ) {
-  const clauses = ["attribution_date BETWEEN ? AND ?", "status = 'approved'"]
+  const clauses = ["attribution_date BETWEEN ? AND ?"]
   const values: Array<string> = [from, to]
   if (accountIds.length) {
-    clauses.push(
-      `(account_id IN (${accountIds.map(() => "?").join(",")}) OR account_id IS NULL)`
-    )
+    clauses.push(`account_id IN (${accountIds.map(() => "?").join(",")})`)
     values.push(...accountIds)
   }
   if (gateway) {
@@ -900,11 +934,46 @@ async function loadSalesSummary(
   }
   const result = await db
     .prepare(
-      `SELECT COALESCE(SUM(amount_brl), 0) AS revenue, COUNT(*) AS orders FROM sales WHERE ${clauses.join(" AND ")}`
+      `SELECT
+        COALESCE(SUM(CASE WHEN status = 'approved' AND amount_brl IS NOT NULL THEN amount_brl ELSE 0 END), 0) AS approved_revenue,
+        COALESCE(SUM(CASE WHEN status = 'refunded' AND amount_brl IS NOT NULL THEN amount_brl ELSE 0 END), 0) AS refunded_revenue,
+        COALESCE(SUM(CASE WHEN status = 'chargeback' AND amount_brl IS NOT NULL THEN amount_brl ELSE 0 END), 0) AS chargeback_revenue,
+        SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) AS approved_orders,
+        SUM(CASE WHEN status = 'refunded' THEN 1 ELSE 0 END) AS refunded_orders,
+        SUM(CASE WHEN status = 'chargeback' THEN 1 ELSE 0 END) AS chargeback_orders,
+        SUM(CASE WHEN status = 'approved' AND amount_brl IS NOT NULL THEN 1 ELSE 0 END) AS approved_amount_count
+      FROM sales WHERE ${clauses.join(" AND ")}`
     )
     .bind(...values)
-    .first<{ revenue: number; orders: number }>()
-  return result ?? { revenue: 0, orders: 0 }
+    .first<{
+      approved_revenue: number
+      refunded_revenue: number
+      chargeback_revenue: number
+      approved_orders: number | null
+      refunded_orders: number | null
+      chargeback_orders: number | null
+      approved_amount_count: number | null
+    }>()
+  const approvedRevenue = result?.approved_revenue ?? 0
+  const refundedRevenue = result?.refunded_revenue ?? 0
+  const chargebackRevenue = result?.chargeback_revenue ?? 0
+  const approvedOrders = result?.approved_orders ?? 0
+  const refundedOrders = result?.refunded_orders ?? 0
+  const chargebackOrders = result?.chargeback_orders ?? 0
+  const settledOrders = approvedOrders + refundedOrders + chargebackOrders
+  const approvedAmountCount = result?.approved_amount_count ?? 0
+  const netRevenue = approvedRevenue - refundedRevenue - chargebackRevenue
+  return {
+    approvedRevenue,
+    refundedRevenue,
+    chargebackRevenue,
+    approvedOrders,
+    refundedOrders,
+    chargebackOrders,
+    netRevenue,
+    refundRate: settledOrders ? (refundedOrders / settledOrders) * 100 : 0,
+    arpu: approvedAmountCount > 0 ? netRevenue / approvedAmountCount : null,
+  }
 }
 
 async function loadDailyData(
@@ -928,9 +997,7 @@ async function loadDailyData(
 
   const salesClauses = [
     "attribution_date BETWEEN ? AND ?",
-    "status = 'approved'",
     "amount_brl IS NOT NULL",
-    "campaign_id IS NOT NULL",
   ]
   const salesValues: Array<string> = [from, to]
   if (accountIds.length) {
@@ -947,7 +1014,9 @@ async function loadDailyData(
   }
   const revenueResult = await db
     .prepare(
-      `SELECT attribution_date AS date, SUM(amount_brl) AS revenue
+      `SELECT attribution_date AS date,
+        SUM(CASE WHEN status = 'approved' THEN amount_brl ELSE 0 END)
+          - SUM(CASE WHEN status IN ('refunded', 'chargeback') THEN amount_brl ELSE 0 END) AS revenue
     FROM sales WHERE ${salesClauses.join(" AND ")} GROUP BY attribution_date`
     )
     .bind(...salesValues)

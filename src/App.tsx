@@ -17,14 +17,19 @@ import {
   LayoutDashboard,
   Link2,
   LogOut,
+  Megaphone,
   Menu,
   MoreHorizontal,
   Plus,
+  PiggyBank,
+  Receipt,
   RefreshCw,
+  RotateCcw,
   Search,
   Settings2,
   ShoppingBag,
   Sparkles,
+  UserRound,
   Wallet,
   X,
   Zap,
@@ -98,7 +103,12 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import { currencyMinorUnit } from "@/lib/metrics"
+import {
+  AD_TAX_RATE,
+  calculateNetPerformance,
+  currencyMinorUnit,
+  PRODUCT_TAX_RATE,
+} from "@/lib/metrics"
 import {
   summarizeSales,
   type SaleAttributionFilter,
@@ -115,13 +125,43 @@ import {
   type Sale,
 } from "@/lib/dashboard-data"
 
-type Page = "overview" | "sales" | "integrations"
+type Page = "overview" | "campaigns" | "sales" | "integrations"
 type Period = number
 const periodOptions: Period[] = [7, 14, 30, 90, 120]
 type Level = "Campanhas" | "Conjuntos" | "Anúncios"
 type Gateway = "Todos os gateways" | "Hotmart" | "Kiwify"
 type CampaignPerformanceFilter = "all" | "with-sales" | "without-sales"
-type CampaignColumn = "account" | "spend" | "sales" | "revenue" | "roas" | "ctr"
+type CampaignColumn =
+  | "account"
+  | "spend"
+  | "sales"
+  | "revenue"
+  | "profit"
+  | "roas"
+  | "cpa"
+  | "cpc"
+  | "cpm"
+  | "ctr"
+
+type DashboardTotals = {
+  spend: number
+  revenue: number
+  orders: number
+  refunds: number
+  refundRate: number
+  refundedRevenue: number
+  chargebacks: number
+  chargebackRevenue: number
+  adTax: number
+  productTax: number
+  arpu: number | null
+  clicks: number
+  impressions: number
+  matchRate: number
+  profit: number
+  roas: number | null
+  roi: number | null
+}
 
 type SyncActivity = {
   id: string
@@ -149,24 +189,41 @@ const compactCurrency = new Intl.NumberFormat("pt-BR", {
   maximumFractionDigits: 1,
 })
 
+const preciseCurrency = new Intl.NumberFormat("pt-BR", {
+  style: "currency",
+  currency: "BRL",
+  maximumFractionDigits: 2,
+})
+
 const numberFormat = new Intl.NumberFormat("pt-BR")
-const accountColors = ["#dcece4", "#eee7d7", "#e6e2f0", "#e1e9ee", "#f1e4dc"]
 const campaignColumnOptions: Array<[CampaignColumn, string]> = [
   ["account", "Conta de anúncio"],
   ["spend", "Investimento"],
   ["sales", "Vendas"],
   ["revenue", "Receita líquida"],
+  ["profit", "Lucro estimado"],
   ["roas", "ROAS"],
+  ["cpa", "CPA"],
+  ["cpc", "CPC"],
+  ["cpm", "CPM"],
   ["ctr", "CTR"],
 ]
 const campaignCsvHeaders = [
   "id",
-  "campanha",
-  "produto",
-  "gateway",
+  "nivel",
+  "nome",
+  "conta",
   "investimento_brl",
+  "imposto_anuncios_brl",
+  "vendas_aprovadas",
   "receita_brl",
-  "vendas",
+  "imposto_produtos_brl",
+  "lucro_estimado_brl",
+  "roas",
+  "cpa_brl",
+  "cpc_brl",
+  "cpm_brl",
+  "ctr_percentual",
 ]
 const salesCsvHeaders = [
   "transacao",
@@ -195,6 +252,7 @@ function FilterSelect({
 }) {
   return (
     <Select
+      items={options}
       value={value}
       onValueChange={(nextValue) => {
         if (nextValue !== null) onValueChange(nextValue)
@@ -230,7 +288,8 @@ function App() {
   const [gatewayFilter, setGatewayFilter] =
     useState<Gateway>("Todos os gateways")
   const [level, setLevel] = useState<Level>("Campanhas")
-  const [query, setQuery] = useState("")
+  const [campaignQuery, setCampaignQuery] = useState("")
+  const [salesQuery, setSalesQuery] = useState("")
   const [campaignPerformanceFilter, setCampaignPerformanceFilter] =
     useState<CampaignPerformanceFilter>("all")
   const [saleStatusFilter, setSaleStatusFilter] =
@@ -265,10 +324,17 @@ function App() {
   const [liveSummary, setLiveSummary] = useState<{
     spend: number
     revenue: number
+    allNetRevenue: number
+    refundedRevenue: number
+    chargebackRevenue: number
     profit: number
     roas: number | null
     roi: number | null
     sales: number
+    refunds: number
+    chargebacks: number
+    refundRate: number
+    arpu: number | null
     clicks: number
     impressions: number
     attributedSales: number
@@ -312,11 +378,17 @@ function App() {
 
   function updateLevel(value: Level) {
     setLevel(value)
+    if (authState === "authenticated") setLiveCampaigns(null)
     resetResultPages()
   }
 
-  function updateQuery(value: string) {
-    setQuery(value)
+  function updateCampaignQuery(value: string) {
+    setCampaignQuery(value)
+    resetResultPages()
+  }
+
+  function updateSalesQuery(value: string) {
+    setSalesQuery(value)
     resetResultPages()
   }
 
@@ -335,10 +407,46 @@ function App() {
     resetResultPages()
   }
 
+  const dashboardDemoSales = useMemo(
+    () =>
+      sales.filter((sale) => {
+        const accountMatches =
+          accountFilter === "all" || sale.accountId === accountFilter
+        const productMatches =
+          productFilter === "Todos os produtos" ||
+          sale.product === productFilter
+        const gatewayMatches =
+          gatewayFilter === "Todos os gateways" ||
+          sale.gateway === gatewayFilter
+        return accountMatches && productMatches && gatewayMatches
+      }),
+    [accountFilter, gatewayFilter, productFilter]
+  )
+
+  const demoCampaignRows = useMemo(
+    () =>
+      campaigns.map((campaign) => {
+        const reversedRevenue = dashboardDemoSales.reduce((sum, sale) => {
+          const isReversed =
+            sale.status === "Reembolsada" || sale.status === "Chargeback"
+          const belongsToCampaign =
+            sale.matched &&
+            sale.accountId === campaign.accountId &&
+            sale.campaign !== "Sem atribuição" &&
+            campaign.name
+              .toLocaleLowerCase("pt-BR")
+              .includes(sale.campaign.toLocaleLowerCase("pt-BR"))
+          return isReversed && belongsToCampaign ? sum + sale.amount : sum
+        }, 0)
+        return { ...campaign, revenue: campaign.revenue - reversedRevenue }
+      }),
+    [dashboardDemoSales]
+  )
+
   const visibleCampaigns = useMemo(() => {
-    const normalizedQuery = query.trim().toLocaleLowerCase("pt-BR")
+    const normalizedQuery = campaignQuery.trim().toLocaleLowerCase("pt-BR")
     const campaignSource =
-      authState === "authenticated" ? (liveCampaigns ?? []) : campaigns
+      authState === "authenticated" ? (liveCampaigns ?? []) : demoCampaignRows
     return campaignSource.filter((campaign) => {
       const accountMatches =
         accountFilter === "all" || campaign.accountId === accountFilter
@@ -352,7 +460,9 @@ function App() {
         campaign.gateway === gatewayFilter
       const queryMatches =
         !normalizedQuery ||
-        campaign.name.toLocaleLowerCase("pt-BR").includes(normalizedQuery)
+        `${campaign.name} ${campaign.id}`
+          .toLocaleLowerCase("pt-BR")
+          .includes(normalizedQuery)
       const performanceMatches =
         campaignPerformanceFilter === "all" ||
         (campaignPerformanceFilter === "with-sales" && campaign.sales > 0) ||
@@ -372,16 +482,43 @@ function App() {
     gatewayFilter,
     liveCampaigns,
     productFilter,
-    query,
+    campaignQuery,
+    demoCampaignRows,
   ])
 
+  const overviewCampaigns = useMemo(() => {
+    const campaignSource =
+      authState === "authenticated" ? (liveCampaigns ?? []) : campaigns
+    return campaignSource.filter((campaign) => {
+      const accountMatches =
+        accountFilter === "all" || campaign.accountId === accountFilter
+      const productMatches =
+        authState === "authenticated" ||
+        productFilter === "Todos os produtos" ||
+        campaign.product === productFilter
+      const gatewayMatches =
+        authState === "authenticated" ||
+        gatewayFilter === "Todos os gateways" ||
+        campaign.gateway === gatewayFilter
+      return accountMatches && productMatches && gatewayMatches
+    })
+  }, [accountFilter, authState, gatewayFilter, liveCampaigns, productFilter])
+
   const scale = rangeDays / 14
-  const totals = useMemo(() => {
+  const totals = useMemo<DashboardTotals>(() => {
     if (authState === "authenticated" && !liveSummary) {
       return {
         spend: 0,
         revenue: 0,
         orders: 0,
+        refunds: 0,
+        refundRate: 0,
+        refundedRevenue: 0,
+        chargebacks: 0,
+        chargebackRevenue: 0,
+        adTax: 0,
+        productTax: 0,
+        arpu: null,
         clicks: 0,
         impressions: 0,
         matchRate: 0,
@@ -396,64 +533,104 @@ function App() {
       const matchedRate = liveSummary.sales
         ? Math.round((liveSummary.attributedSales / liveSummary.sales) * 100)
         : 0
+      const spend = liveSummary.spend
+      const revenue = liveSummary.allNetRevenue
+      const netPerformance = calculateNetPerformance(spend, revenue)
       return {
-        spend: liveSummary.spend,
-        revenue: liveSummary.revenue,
+        spend,
+        revenue,
         orders: liveSummary.sales,
+        refunds: liveSummary.refunds,
+        refundRate: liveSummary.refundRate,
+        refundedRevenue: liveSummary.refundedRevenue,
+        chargebacks: liveSummary.chargebacks,
+        chargebackRevenue: liveSummary.chargebackRevenue,
+        adTax: netPerformance.adTax,
+        productTax: netPerformance.productTax,
+        arpu: liveSummary.arpu,
         clicks: liveSummary.clicks,
         impressions: liveSummary.impressions,
         matchRate: totalCampaignRevenue ? matchedRate : 0,
-        profit: liveSummary.profit,
-        roas: liveSummary.roas,
-        roi: liveSummary.roi,
+        profit: netPerformance.profit,
+        roas: netPerformance.roas,
+        roi: netPerformance.roi,
       }
     }
     const spend =
-      visibleCampaigns.reduce((sum, campaign) => sum + campaign.spend, 0) *
+      overviewCampaigns.reduce((sum, campaign) => sum + campaign.spend, 0) *
       scale
-    const revenue =
-      visibleCampaigns.reduce((sum, campaign) => sum + campaign.revenue, 0) *
+    const approvedRevenue =
+      overviewCampaigns.reduce((sum, campaign) => sum + campaign.revenue, 0) *
       scale
+    const demoSalesSummary = summarizeSales(dashboardDemoSales)
+    const revenue = Math.max(
+      0,
+      approvedRevenue -
+        demoSalesSummary.refundedRevenue -
+        demoSalesSummary.chargebackRevenue
+    )
     const orders = Math.round(
-      visibleCampaigns.reduce((sum, campaign) => sum + campaign.sales, 0) *
+      overviewCampaigns.reduce((sum, campaign) => sum + campaign.sales, 0) *
         scale
     )
     const clicks = Math.round(
-      visibleCampaigns.reduce((sum, campaign) => sum + campaign.clicks, 0) *
+      overviewCampaigns.reduce((sum, campaign) => sum + campaign.clicks, 0) *
         scale
     )
     const impressions = Math.round(
-      visibleCampaigns.reduce(
+      overviewCampaigns.reduce(
         (sum, campaign) => sum + campaign.impressions,
         0
       ) * scale
     )
-    const matchedRevenue = visibleCampaigns.reduce(
+    const matchedRevenue = overviewCampaigns.reduce(
       (sum, campaign) => sum + (campaign.revenue * campaign.matchRate) / 100,
       0
     )
-    const baseRevenue = visibleCampaigns.reduce(
+    const baseRevenue = overviewCampaigns.reduce(
       (sum, campaign) => sum + campaign.revenue,
       0
     )
     const matchRate = baseRevenue
       ? Math.round((matchedRevenue / baseRevenue) * 100)
       : 0
+    const netPerformance = calculateNetPerformance(spend, revenue)
+    const settledSales =
+      demoSalesSummary.approved +
+      demoSalesSummary.refunded +
+      demoSalesSummary.chargebacks
     return {
       spend,
       revenue,
       orders,
+      refunds: demoSalesSummary.refunded,
+      refundRate: settledSales
+        ? (demoSalesSummary.refunded / settledSales) * 100
+        : 0,
+      refundedRevenue: demoSalesSummary.refundedRevenue,
+      chargebacks: demoSalesSummary.chargebacks,
+      chargebackRevenue: demoSalesSummary.chargebackRevenue,
+      adTax: netPerformance.adTax,
+      productTax: netPerformance.productTax,
+      arpu: orders > 0 ? revenue / orders : null,
       clicks,
       impressions,
       matchRate,
-      profit: revenue - spend,
-      roas: spend > 0 ? revenue / spend : null,
-      roi: spend > 0 ? (revenue - spend) / spend : null,
+      profit: netPerformance.profit,
+      roas: netPerformance.roas,
+      roi: netPerformance.roi,
     }
-  }, [authState, liveCampaigns, liveSummary, scale, visibleCampaigns])
+  }, [
+    authState,
+    dashboardDemoSales,
+    liveCampaigns,
+    liveSummary,
+    overviewCampaigns,
+    scale,
+  ])
 
   const demoFilteredSales = useMemo(() => {
-    const normalizedQuery = query.trim().toLocaleLowerCase("pt-BR")
+    const normalizedQuery = salesQuery.trim().toLocaleLowerCase("pt-BR")
     return sales.filter((sale) => {
       const gatewayMatches =
         gatewayFilter === "Todos os gateways" || sale.gateway === gatewayFilter
@@ -489,7 +666,7 @@ function App() {
     accountFilter,
     gatewayFilter,
     productFilter,
-    query,
+    salesQuery,
     saleAttributionFilter,
     saleStatusFilter,
   ])
@@ -620,10 +797,18 @@ function App() {
             summary: {
               spend: number
               revenue: number
+              allNetRevenue: number
+              approvedRevenue: number
+              refundedRevenue: number
+              chargebackRevenue: number
               profit: number
               roas: number | null
               roi: number | null
               sales: number
+              refundedOrders: number
+              chargebackOrders: number
+              refundRate: number
+              arpu: number | null
               clicks: number
               impressions: number
               attributedSales: number
@@ -662,7 +847,11 @@ function App() {
                 fxMissing: row.fxMissing,
               }))
             )
-            setLiveSummary(result.summary)
+            setLiveSummary({
+              ...result.summary,
+              refunds: result.summary.refundedOrders,
+              chargebacks: result.summary.chargebackOrders,
+            })
             setLiveDaily(
               result.daily?.map((item) => ({
                 label: item.date.slice(8, 10),
@@ -673,6 +862,7 @@ function App() {
           } else {
             setLiveCampaigns([])
             setLiveSummary(null)
+            setLiveDaily(null)
           }
         } else {
           const result = (await dashboardResponse.json().catch(() => ({}))) as {
@@ -681,6 +871,9 @@ function App() {
           setDashboardError(
             result.error || "Não foi possível carregar os dados do dashboard."
           )
+          setLiveCampaigns([])
+          setLiveSummary(null)
+          setLiveDaily(null)
         }
         if (accountResponse.ok) {
           const result = (await accountResponse.json()) as {
@@ -690,9 +883,8 @@ function App() {
               timezone_name: string
             }>
           }
-          const colors = accountColors
           setAdAccountList(
-            (result.accounts ?? []).map((account, index) => ({
+            (result.accounts ?? []).map((account) => ({
               id: account.id,
               name: account.name,
               initials: account.name
@@ -701,7 +893,6 @@ function App() {
                 .map((word) => word[0])
                 .join("")
                 .toUpperCase(),
-              color: colors[index % colors.length],
               timezone: account.timezone_name,
             }))
           )
@@ -738,6 +929,9 @@ function App() {
               ? error.message
               : "Não foi possível carregar o dashboard."
           )
+          setLiveCampaigns([])
+          setLiveSummary(null)
+          setLiveDaily(null)
           console.error("dashboard_load_failed", error)
         }
       } finally {
@@ -772,7 +966,7 @@ function App() {
       params.set("gateway", gatewayFilter.toLowerCase())
     if (productFilter !== "Todos os produtos")
       params.set("product", productFilter)
-    if (query.trim()) params.set("q", query.trim())
+    if (salesQuery.trim()) params.set("q", salesQuery.trim())
     if (saleStatusFilter !== "all") params.set("status", saleStatusFilter)
     if (saleAttributionFilter !== "all")
       params.set("attribution", saleAttributionFilter)
@@ -853,6 +1047,8 @@ function App() {
               : "Não foi possível carregar as vendas."
           )
           setLiveSales([])
+          setLiveSalesTotal(0)
+          setLiveSalesSummary(null)
         }
       } finally {
         if (!controller.signal.aborted) setSalesLoading(false)
@@ -869,7 +1065,7 @@ function App() {
     dateRange.to,
     gatewayFilter,
     productFilter,
-    query,
+    salesQuery,
     saleAttributionFilter,
     saleStatusFilter,
     salesPage,
@@ -1091,27 +1287,65 @@ function App() {
       return
     }
 
-    const campaignsToExport = selectedOnly
-      ? visibleCampaigns.filter((campaign) =>
-          selectedCampaignIds.includes(campaign.id)
-        )
-      : visibleCampaigns
-    if (selectedOnly && !campaignsToExport.length) {
-      setToast("Selecione pelo menos uma campanha para exportar.")
+    const exportRows = visibleCampaigns.flatMap((campaign) => {
+      if (authState === "authenticated" || level === "Campanhas") {
+        return [
+          {
+            campaign,
+            id: campaign.id,
+            name: campaign.name,
+            factor: authState === "authenticated" ? 1 : period / 14,
+          },
+        ]
+      }
+      const childNames = campaign.adsets?.length
+        ? campaign.adsets
+        : [campaign.name]
+      return childNames.map((name, index) => ({
+        campaign,
+        id: `${campaign.id}-${index}`,
+        name: level === "Anúncios" ? `${name} · Criativo ${index + 1}` : name,
+        factor: (period / 14) * 0.5,
+      }))
+    })
+    const rowsToExport = selectedOnly
+      ? exportRows.filter((row) => selectedCampaignIds.includes(row.id))
+      : exportRows
+    if (selectedOnly && !rowsToExport.length) {
+      setToast("Selecione pelo menos uma entidade para exportar.")
       return
     }
+    const accountNames = new Map(
+      adAccountList.map((item) => [item.id, item.name])
+    )
     downloadCsv(
       selectedOnly ? "campanhas-selecionadas" : "campanhas",
       campaignCsvHeaders,
-      campaignsToExport.map((campaign) => [
-        campaign.id,
-        campaign.name,
-        campaign.product,
-        campaign.gateway,
-        campaign.spend,
-        campaign.revenue,
-        campaign.sales,
-      ])
+      rowsToExport.map(({ campaign, id, name, factor }) => {
+        const spend = campaign.spend * factor
+        const revenue = campaign.revenue * factor
+        const salesCount = Math.round(campaign.sales * factor)
+        const result = calculateNetPerformance(spend, revenue)
+        const clicks = campaign.clicks * factor
+        const impressions = campaign.impressions * factor
+        return [
+          id,
+          level,
+          name,
+          accountNames.get(campaign.accountId) ?? campaign.accountName ?? "—",
+          spend,
+          result.adTax,
+          salesCount,
+          revenue,
+          result.productTax,
+          result.profit,
+          result.roas,
+          salesCount > 0 ? spend / salesCount : null,
+          clicks > 0 ? spend / clicks : null,
+          impressions > 0 ? (spend / impressions) * 1000 : null,
+          impressions > 0 ? (clicks / impressions) * 100 : null,
+        ]
+      })
     )
   }
 
@@ -1126,7 +1360,7 @@ function App() {
       params.set("gateway", gatewayFilter.toLowerCase())
     if (productFilter !== "Todos os produtos")
       params.set("product", productFilter)
-    if (query.trim()) params.set("q", query.trim())
+    if (salesQuery.trim()) params.set("q", salesQuery.trim())
     if (saleStatusFilter !== "all") params.set("status", saleStatusFilter)
     if (saleAttributionFilter !== "all")
       params.set("attribution", saleAttributionFilter)
@@ -1192,7 +1426,9 @@ function App() {
   function navigate(nextPage: Page) {
     setPage(nextPage)
     setMobileNavOpen(false)
-    updateQuery("")
+    setCampaignQuery("")
+    setSalesQuery("")
+    resetResultPages()
   }
 
   function openIntegrations() {
@@ -1219,9 +1455,9 @@ function App() {
     setGatewayFilter("Todos os gateways")
     setSaleStatusFilter("all")
     setSaleAttributionFilter("matched")
-    setQuery(
+    setSalesQuery(
       authState === "authenticated"
-        ? campaign.name
+        ? campaign.id
         : (campaign.name.split("•").at(-1)?.trim() ?? campaign.name)
     )
     resetResultPages()
@@ -1234,6 +1470,12 @@ function App() {
       setAuthState("required")
       setLiveCampaigns(null)
       setLiveSales(null)
+      setLiveSummary(null)
+      setLiveDaily(null)
+      setLiveSalesSummary(null)
+      setLiveSalesTotal(0)
+      setDashboardError("")
+      setSalesError("")
       setRecentActivity([])
       setToast("")
     } catch (error) {
@@ -1342,6 +1584,15 @@ function App() {
             <span className="nav-shortcut">⌘ 1</span>
           </button>
           <button
+            className={`nav-item ${page === "campaigns" ? "active" : ""}`}
+            onClick={() => navigate("campaigns")}
+            aria-current={page === "campaigns" ? "page" : undefined}
+          >
+            <Megaphone size={18} />
+            <span>Campanhas</span>
+            <span className="nav-shortcut">⌘ 2</span>
+          </button>
+          <button
             className={`nav-item ${page === "sales" ? "active" : ""}`}
             onClick={() => navigate("sales")}
             aria-current={page === "sales" ? "page" : undefined}
@@ -1387,15 +1638,9 @@ function App() {
               key={account.id}
               onClick={() => {
                 updateAccountFilter(account.id)
-                navigate("overview")
               }}
             >
-              <span
-                className="account-avatar"
-                style={{ backgroundColor: account.color }}
-              >
-                {account.initials}
-              </span>
+              <span className="account-avatar">{account.initials}</span>
               <span>{account.name}</span>
               <span className="account-status" />
             </button>
@@ -1585,33 +1830,55 @@ function App() {
               setProductFilter={updateProductFilter}
               gatewayFilter={gatewayFilter}
               setGatewayFilter={updateGatewayFilter}
-              level={level}
-              setLevel={updateLevel}
-              query={query}
-              setQuery={updateQuery}
-              campaignPerformanceFilter={campaignPerformanceFilter}
-              setCampaignPerformanceFilter={updateCampaignPerformanceFilter}
-              campaignPage={campaignPage}
-              setCampaignPage={setCampaignPage}
-              selectedCampaignIds={selectedCampaignIds}
-              setSelectedCampaignIds={setSelectedCampaignIds}
-              campaignColumns={campaignColumns}
-              setCampaignColumns={setCampaignColumns}
-              onExportSelected={() => void exportCsv(true)}
-              onShowCampaignSales={showCampaignSales}
-              onToast={setToast}
               chartMode={chartMode}
               setChartMode={setChartMode}
               totals={totals}
-              rows={visibleCampaigns}
               accountOptions={adAccountList}
               integrationStatus={integrationStatus}
               productOptions={productOptions}
               dailyData={liveDaily ?? undefined}
               demo={authState === "demo"}
-              live={liveCampaigns !== null}
               onSync={requestSync}
+              syncing={syncing}
+              loading={dashboardLoading}
+              error={dashboardError}
+              onRetry={() => setDataRefresh((value) => value + 1)}
+            />
+          )}
+          {page === "campaigns" && (
+            <CampaignsPage
+              period={period}
+              setPeriod={updatePeriod}
+              dateRange={dateRange}
+              onDateRangeApply={applyDateRange}
+              accountFilter={accountFilter}
+              setAccountFilter={updateAccountFilter}
+              accountOptions={adAccountList}
+              productFilter={productFilter}
+              productOptions={productOptions}
+              setProductFilter={updateProductFilter}
+              gatewayFilter={gatewayFilter}
+              setGatewayFilter={updateGatewayFilter}
+              query={campaignQuery}
+              setQuery={updateCampaignQuery}
+              performanceFilter={campaignPerformanceFilter}
+              setPerformanceFilter={updateCampaignPerformanceFilter}
+              level={level}
+              setLevel={updateLevel}
+              rows={visibleCampaigns}
+              page={campaignPage}
+              setPage={setCampaignPage}
+              selectedIds={selectedCampaignIds}
+              setSelectedIds={setSelectedCampaignIds}
+              columns={campaignColumns}
+              setColumns={setCampaignColumns}
               onExport={() => void exportCsv()}
+              onExportSelected={() => void exportCsv(true)}
+              onShowSales={showCampaignSales}
+              onToast={setToast}
+              demo={authState === "demo"}
+              live={authState === "authenticated"}
+              onSync={requestSync}
               syncing={syncing}
               loading={dashboardLoading}
               error={dashboardError}
@@ -1628,8 +1895,8 @@ function App() {
               setGatewayFilter={updateGatewayFilter}
               productFilter={productFilter}
               setProductFilter={updateProductFilter}
-              query={query}
-              setQuery={updateQuery}
+              query={salesQuery}
+              setQuery={updateSalesQuery}
               rows={displayedSales}
               total={salesTotal}
               summary={salesSummary}
@@ -1720,39 +1987,62 @@ type FiltersProps = {
   onExport: () => void
 }
 
-type OverviewPageProps = FiltersProps & {
-  level: Level
-  setLevel: (level: Level) => void
+type OverviewPageProps = {
+  period: Period
+  setPeriod: (period: Period) => void
+  dateRange: DateRange
+  onDateRangeApply: (range: DateRange) => void
+  accountFilter: string
+  setAccountFilter: (account: string) => void
+  productFilter: string
+  productOptions: string[]
+  setProductFilter: (product: string) => void
+  gatewayFilter: Gateway
+  setGatewayFilter: (gateway: Gateway) => void
   chartMode: "Receita" | "Investimento"
   setChartMode: (mode: "Receita" | "Investimento") => void
-  totals: {
-    spend: number
-    revenue: number
-    orders: number
-    clicks: number
-    impressions: number
-    matchRate: number
-    profit: number
-    roas: number | null
-    roi: number | null
-  }
-  rows: Campaign[]
-  campaignPerformanceFilter: "all" | "with-sales" | "without-sales"
-  setCampaignPerformanceFilter: (
-    filter: "all" | "with-sales" | "without-sales"
-  ) => void
-  campaignPage: number
-  setCampaignPage: (page: number) => void
-  selectedCampaignIds: string[]
-  setSelectedCampaignIds: (ids: string[]) => void
-  campaignColumns: Record<CampaignColumn, boolean>
-  setCampaignColumns: (columns: Record<CampaignColumn, boolean>) => void
-  onExportSelected: () => void
-  onShowCampaignSales: (campaign: Campaign) => void
-  onToast: (message: string) => void
+  totals: DashboardTotals
   accountOptions: AdAccount[]
   integrationStatus: { meta: boolean; hotmart: boolean; kiwify: boolean }
   dailyData?: Array<{ label: string; spend: number; revenue: number }>
+  demo: boolean
+  onSync: () => void
+  syncing: boolean
+  loading: boolean
+  error: string
+  onRetry: () => void
+}
+
+type CampaignsPageProps = {
+  period: Period
+  setPeriod: (period: Period) => void
+  dateRange: DateRange
+  onDateRangeApply: (range: DateRange) => void
+  accountFilter: string
+  setAccountFilter: (account: string) => void
+  accountOptions: AdAccount[]
+  productFilter: string
+  productOptions: string[]
+  setProductFilter: (product: string) => void
+  gatewayFilter: Gateway
+  setGatewayFilter: (gateway: Gateway) => void
+  query: string
+  setQuery: (query: string) => void
+  performanceFilter: CampaignPerformanceFilter
+  setPerformanceFilter: (filter: CampaignPerformanceFilter) => void
+  level: Level
+  setLevel: (level: Level) => void
+  rows: Campaign[]
+  page: number
+  setPage: (page: number) => void
+  selectedIds: string[]
+  setSelectedIds: (ids: string[]) => void
+  columns: Record<CampaignColumn, boolean>
+  setColumns: (columns: Record<CampaignColumn, boolean>) => void
+  onExport: () => void
+  onExportSelected: () => void
+  onShowSales: (campaign: Campaign) => void
+  onToast: (message: string) => void
   demo: boolean
   live: boolean
   onSync: () => void
@@ -1766,18 +2056,45 @@ function OverviewPage(props: OverviewPageProps) {
   const accountName = props.accountOptions.find(
     (account) => account.id === props.accountFilter
   )?.name
-  const activeFilterCount =
-    Number(props.accountFilter !== "all") +
-    Number(props.productFilter !== "Todos os produtos") +
-    Number(props.gatewayFilter !== "Todos os gateways") +
-    Number(props.campaignPerformanceFilter !== "all")
+  const chartData = useMemo(() => {
+    if (props.dailyData) return props.dailyData
+
+    const dayCount = Math.max(1, Math.min(120, daysBetween(props.dateRange)))
+    const sourcePoints = Array.from(
+      { length: dayCount },
+      (_, index) => dailyMetrics[index % dailyMetrics.length]
+    )
+    const spendWeight =
+      sourcePoints.reduce((sum, point) => sum + point.spend, 0) || 1
+    const revenueWeight =
+      sourcePoints.reduce((sum, point) => sum + point.revenue, 0) || 1
+    const date = new Date(`${props.dateRange.from}T00:00:00.000Z`)
+
+    return sourcePoints.map((point, index) => {
+      const pointDate = new Date(date)
+      pointDate.setUTCDate(pointDate.getUTCDate() + index)
+      return {
+        label: pointDate.toLocaleDateString("pt-BR", {
+          day: "2-digit",
+          month: "2-digit",
+          timeZone: "UTC",
+        }),
+        spend: (point.spend / spendWeight) * props.totals.spend,
+        revenue: (point.revenue / revenueWeight) * props.totals.revenue,
+      }
+    })
+  }, [
+    props.dailyData,
+    props.dateRange,
+    props.totals.revenue,
+    props.totals.spend,
+  ])
 
   function exportChartData() {
-    const points = props.dailyData ?? dailyMetrics
     downloadCsv(
       "performance-diaria",
       ["data", "investimento_brl", "receita_brl"],
-      points.map((point) => [point.label, point.spend, point.revenue])
+      chartData.map((point) => [point.label, point.spend, point.revenue])
     )
   }
 
@@ -1797,14 +2114,6 @@ function OverviewPage(props: OverviewPageProps) {
           <p>Acompanhe o que está funcionando nas suas campanhas.</p>
         </div>
         <div className="heading-actions">
-          <Button
-            className="dashboard-action dashboard-action-secondary"
-            onClick={props.onExport}
-            size="lg"
-            variant="outline"
-          >
-            <Download data-icon="inline-start" /> Exportar
-          </Button>
           <Button
             className="dashboard-action"
             onClick={props.onSync}
@@ -1876,8 +2185,8 @@ function OverviewPage(props: OverviewPageProps) {
           <span>Conta</span>
           <FilterSelect
             ariaLabel="Filtrar por conta"
-            value={props.accountFilter ?? "all"}
-            onValueChange={(value) => props.setAccountFilter?.(value)}
+            value={props.accountFilter}
+            onValueChange={props.setAccountFilter}
             className="select-filter-control"
             options={[
               { value: "all", label: "Todas as contas" },
@@ -1920,49 +2229,6 @@ function OverviewPage(props: OverviewPageProps) {
             ]}
           />
         </div>
-        <Popover
-          label="Mais filtros de campanhas"
-          trigger={
-            <>
-              <Filter size={16} />
-              <span>Filtros</span>
-              <span className="filter-count">{activeFilterCount}</span>
-            </>
-          }
-          triggerClassName="filter-more"
-          panelClassName="advanced-filter-menu"
-        >
-          {(close) => (
-            <div className="popover-actions">
-              <strong>Campanhas</strong>
-              <span className="popover-select-label">Resultado atribuído</span>
-              <FilterSelect
-                ariaLabel="Filtrar resultado atribuído"
-                value={props.campaignPerformanceFilter}
-                onValueChange={(value) =>
-                  props.setCampaignPerformanceFilter(
-                    value as OverviewPageProps["campaignPerformanceFilter"]
-                  )
-                }
-                className="advanced-filter-select"
-                options={[
-                  { value: "all", label: "Todas as campanhas" },
-                  { value: "with-sales", label: "Com vendas" },
-                  { value: "without-sales", label: "Sem vendas" },
-                ]}
-              />
-              <button
-                onClick={() => {
-                  props.setCampaignPerformanceFilter("all")
-                  close()
-                }}
-                type="button"
-              >
-                Limpar filtro avançado
-              </button>
-            </div>
-          )}
-        </Popover>
       </div>
 
       {props.error && (
@@ -1984,19 +2250,22 @@ function OverviewPage(props: OverviewPageProps) {
           label="Investimento"
           value={currency.format(props.totals.spend)}
           detail="Meta Ads"
-          trend={props.demo ? "8,2%" : undefined}
-          positive={false}
           icon={<Wallet size={16} />}
           iconStyle="sage"
         />
         <MetricCard
           label="Receita líquida"
           value={currency.format(props.totals.revenue)}
-          detail="Após reembolsos"
-          trend={props.demo ? "18,6%" : undefined}
-          positive
+          detail="Vendas aprovadas menos reembolsos e chargebacks"
           icon={<CircleDollarIcon />}
           iconStyle="lime"
+        />
+        <MetricCard
+          label="Lucro estimado"
+          value={preciseCurrency.format(props.totals.profit)}
+          detail="Receita menos investimento e impostos estimados"
+          icon={<PiggyBank size={17} />}
+          iconStyle="sage"
         />
         <MetricCard
           label="ROAS"
@@ -2005,9 +2274,7 @@ function OverviewPage(props: OverviewPageProps) {
               ? "—"
               : `${props.totals.roas.toFixed(2).replace(".", ",")}x`
           }
-          detail="Receita atribuída ÷ investimento"
-          trend={props.demo ? "0,42x" : undefined}
-          positive
+          detail="Receita líquida ÷ investimento em anúncios"
           icon={<BarChart3 size={16} />}
           iconStyle="lavender"
         />
@@ -2018,11 +2285,52 @@ function OverviewPage(props: OverviewPageProps) {
               ? "—"
               : `${(props.totals.roi * 100).toFixed(1).replace(".", ",")}%`
           }
-          detail="(Receita − investimento) ÷ investimento"
-          trend={props.demo ? "21,4%" : undefined}
-          positive
+          detail="Lucro após impostos ÷ investimento com imposto sobre anúncios"
           icon={<ArrowUpRight size={17} />}
           iconStyle="coral"
+        />
+      </section>
+
+      <section className="detail-metrics-grid" aria-label="Receita e encargos">
+        <InsightCard
+          label="Taxa de reembolso"
+          value={`${formatPercent(props.totals.refundRate)}%`}
+          detail={`${numberFormat.format(props.totals.refunds)} pedidos reembolsados entre as vendas finalizadas`}
+          icon={<RotateCcw size={16} />}
+        />
+        <InsightCard
+          label="Receita reembolsada"
+          value={preciseCurrency.format(props.totals.refundedRevenue)}
+          detail="Valor dos pedidos reembolsados no período"
+          icon={<ArrowDownRight size={16} />}
+        />
+        <InsightCard
+          label="ARPU"
+          value={
+            props.totals.arpu === null
+              ? "—"
+              : preciseCurrency.format(props.totals.arpu)
+          }
+          detail="Receita líquida por venda aprovada; aproximação por pedido"
+          icon={<UserRound size={16} />}
+        />
+        <InsightCard
+          label="Chargebacks"
+          value={numberFormat.format(props.totals.chargebacks)}
+          detail={`${preciseCurrency.format(props.totals.chargebackRevenue)} em valor contestado`}
+          icon={<ShoppingBag size={16} />}
+        />
+        <InsightCard
+          label={`Imposto sobre anúncios · ${formatPercent(AD_TAX_RATE * 100)}%`}
+          value={preciseCurrency.format(props.totals.adTax)}
+          detail="Estimativa aplicada sobre o investimento em anúncios"
+          icon={<Receipt size={16} />}
+        />
+        <InsightCard
+          label={`Imposto sobre produtos · ${formatPercent(PRODUCT_TAX_RATE * 100)}%`}
+          value={preciseCurrency.format(props.totals.productTax)}
+          detail="Estimativa aplicada sobre a receita líquida"
+          icon={<Receipt size={16} />}
         />
       </section>
 
@@ -2114,7 +2422,7 @@ function OverviewPage(props: OverviewPageProps) {
             <PerformanceChart
               mode={props.chartMode}
               days={daysBetween(props.dateRange)}
-              data={props.dailyData}
+              data={chartData}
             />
             <div className="chart-footer">
               <span>{chartBoundary(props.dateRange, "start")}</span>
@@ -2249,28 +2557,302 @@ function OverviewPage(props: OverviewPageProps) {
         </Card>
       </div>
 
+      <div className="disclaimer">
+        <Clock3 size={14} /> O lucro e o ROI incluem estimativas de 12,5% sobre
+        anúncios e 6% sobre a receita líquida. ARPU usa vendas aprovadas como
+        aproximação de usuários.
+      </div>
+    </>
+  )
+}
+
+function InsightCard({
+  label,
+  value,
+  detail,
+  icon,
+}: {
+  label: string
+  value: string
+  detail: string
+  icon: React.ReactNode
+}) {
+  return (
+    <Card className="detail-metric-card">
+      <CardHeader className="detail-metric-header">
+        <CardTitle>{label}</CardTitle>
+        <span className="detail-metric-icon">{icon}</span>
+      </CardHeader>
+      <CardContent className="detail-metric-content">
+        <strong>{value}</strong>
+        <p>{detail}</p>
+      </CardContent>
+    </Card>
+  )
+}
+
+function CampaignSummaryCard({
+  label,
+  value,
+  detail,
+}: {
+  label: string
+  value: string
+  detail: string
+}) {
+  return (
+    <Card className="campaign-summary-card">
+      <CardHeader>
+        <CardTitle>{label}</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <strong>{value}</strong>
+        <span>{detail}</span>
+      </CardContent>
+    </Card>
+  )
+}
+
+function CampaignsPage(props: CampaignsPageProps) {
+  const periodFactor = props.live ? 1 : props.period / 14
+  const spend =
+    props.rows.reduce((sum, row) => sum + row.spend, 0) * periodFactor
+  const revenue =
+    props.rows.reduce((sum, row) => sum + row.revenue, 0) * periodFactor
+  const orders =
+    props.rows.reduce((sum, row) => sum + row.sales, 0) * periodFactor
+  const performance = calculateNetPerformance(spend, revenue)
+  const entityCount =
+    props.live || props.level === "Campanhas"
+      ? props.rows.length
+      : props.rows.reduce(
+          (sum, row) => sum + Math.max(1, row.adsets?.length ?? 1),
+          0
+        )
+
+  return (
+    <>
+      <div className="page-heading">
+        <div>
+          <div className="eyebrow">
+            <span className="eyebrow-line" /> META ADS{" "}
+            <span className="eyebrow-period">
+              · {formatRange(props.dateRange)}
+            </span>
+          </div>
+          <h1>
+            Campanhas<span className="heading-period">.</span>
+          </h1>
+          <p>Compare resultados e abra cada item no Meta Ads.</p>
+        </div>
+        <div className="heading-actions campaigns-heading-actions">
+          {props.selectedIds.length > 0 && (
+            <Button
+              className="dashboard-action dashboard-action-secondary"
+              onClick={props.onExportSelected}
+              size="lg"
+              variant="outline"
+            >
+              <Download data-icon="inline-start" />
+              Exportar {props.selectedIds.length} selecionadas
+            </Button>
+          )}
+          <Button
+            className="dashboard-action dashboard-action-secondary"
+            onClick={props.onExport}
+            size="lg"
+            variant="outline"
+          >
+            <Download data-icon="inline-start" /> Exportar CSV
+          </Button>
+          <Button
+            className="dashboard-action"
+            onClick={props.onSync}
+            disabled={props.syncing}
+            size="lg"
+          >
+            <RefreshCw
+              className={props.syncing ? "spin" : ""}
+              data-icon="inline-start"
+            />
+            {props.syncing ? "Atualizando…" : "Atualizar anúncios"}
+          </Button>
+        </div>
+      </div>
+
+      {props.demo && (
+        <Alert className="demo-notice">
+          <span className="notice-spark">
+            <Megaphone size={16} />
+          </span>
+          <div className="demo-notice-copy">
+            <AlertTitle>Campanhas de demonstração</AlertTitle>
+            <AlertDescription>
+              Conecte uma conta Meta para consultar campanhas e anúncios reais.
+            </AlertDescription>
+          </div>
+          <AlertAction className="demo-notice-action">
+            <Button
+              onClick={() =>
+                window.dispatchEvent(new CustomEvent("navigate-integrations"))
+              }
+              size="sm"
+              variant="link"
+            >
+              Conectar conta <ArrowRight data-icon="inline-end" />
+            </Button>
+          </AlertAction>
+        </Alert>
+      )}
+
+      <section className="campaign-summary-grid" aria-label="Resumo da seleção">
+        <CampaignSummaryCard
+          label="Entidades"
+          value={numberFormat.format(entityCount)}
+          detail={`${props.level.toLocaleLowerCase("pt-BR")} no filtro atual`}
+        />
+        <CampaignSummaryCard
+          label="Investimento"
+          value={preciseCurrency.format(spend)}
+          detail="Total no período selecionado"
+        />
+        <CampaignSummaryCard
+          label="Receita líquida"
+          value={preciseCurrency.format(revenue)}
+          detail="Atribuída às entidades listadas"
+        />
+        <CampaignSummaryCard
+          label="ROAS consolidado"
+          value={
+            performance.roas === null
+              ? "—"
+              : `${performance.roas.toFixed(2).replace(".", ",")}x`
+          }
+          detail={`${numberFormat.format(orders)} vendas aprovadas atribuídas`}
+        />
+      </section>
+
+      <section
+        className="campaign-filter-panel"
+        aria-label="Filtros de campanhas"
+      >
+        <div className="campaign-filter-heading">
+          <Filter size={17} />
+          <strong>Filtrar resultados</strong>
+        </div>
+        <div className="campaign-filters">
+          <div className="campaign-period-filter">
+            <ToggleGroup
+              className="period-toggle"
+              value={
+                isPeriodSelected(props.dateRange, props.period)
+                  ? [String(props.period)]
+                  : []
+              }
+              onValueChange={(selected) => {
+                if (selected[0]) props.setPeriod(Number(selected[0]))
+              }}
+              aria-label="Período das campanhas"
+            >
+              {periodOptions.map((days) => (
+                <ToggleGroupItem key={days} value={String(days)}>
+                  {days} dias
+                </ToggleGroupItem>
+              ))}
+            </ToggleGroup>
+            <DateRangeControl
+              onApply={props.onDateRangeApply}
+              value={props.dateRange}
+            />
+          </div>
+          <FilterSelect
+            ariaLabel="Filtrar campanhas por conta"
+            value={props.accountFilter}
+            onValueChange={props.setAccountFilter}
+            className="campaign-filter-control"
+            options={[
+              { value: "all", label: "Todas as contas" },
+              ...props.accountOptions.map((account) => ({
+                value: account.id,
+                label: account.name,
+              })),
+            ]}
+          />
+          <FilterSelect
+            ariaLabel="Filtrar campanhas por produto"
+            value={props.productFilter}
+            onValueChange={props.setProductFilter}
+            className="campaign-filter-control"
+            options={[
+              { value: "Todos os produtos", label: "Todos os produtos" },
+              ...props.productOptions.map((product) => ({
+                value: product,
+                label: product,
+              })),
+            ]}
+          />
+          <FilterSelect
+            ariaLabel="Filtrar campanhas por gateway"
+            value={props.gatewayFilter}
+            onValueChange={(value) => props.setGatewayFilter(value as Gateway)}
+            className="campaign-filter-control"
+            options={[
+              { value: "Todos os gateways", label: "Todos os gateways" },
+              { value: "Hotmart", label: "Hotmart" },
+              { value: "Kiwify", label: "Kiwify" },
+            ]}
+          />
+          <FilterSelect
+            ariaLabel="Filtrar campanhas pelo resultado"
+            value={props.performanceFilter}
+            onValueChange={(value) =>
+              props.setPerformanceFilter(value as CampaignPerformanceFilter)
+            }
+            className="campaign-filter-control"
+            options={[
+              { value: "all", label: "Todos os resultados" },
+              { value: "with-sales", label: "Com vendas" },
+              { value: "without-sales", label: "Sem vendas" },
+            ]}
+          />
+          <div className="table-search campaign-search">
+            <Search size={17} />
+            <Input
+              aria-label="Buscar campanha, conjunto ou anúncio"
+              placeholder="Buscar por nome ou ID"
+              value={props.query}
+              onChange={(event) => props.setQuery(event.target.value)}
+            />
+          </div>
+        </div>
+      </section>
+
+      {props.error && (
+        <Alert className="inline-error" variant="destructive">
+          <AlertDescription>{props.error}</AlertDescription>
+          <Button onClick={props.onRetry} size="sm" variant="outline">
+            Tentar novamente
+          </Button>
+        </Alert>
+      )}
+      {props.loading && (
+        <div aria-live="polite" className="loading-note">
+          <RefreshCw className="spin" size={15} /> Atualizando dados do período…
+        </div>
+      )}
+
       <Card className="panel campaigns-panel">
         <CardHeader className="panel-header campaign-header">
           <div>
-            <div className="panel-kicker">DETALHAMENTO</div>
+            <div className="panel-kicker">ESTRUTURA DE ANÚNCIOS</div>
             <h2>
-              Campanhas{" "}
+              {props.level}{" "}
               <Badge className="table-count" variant="secondary">
-                {props.rows.length}
+                {entityCount}
               </Badge>
             </h2>
           </div>
-          <div className="table-tools">
-            <div className="table-search">
-              <Search size={15} />
-              <Input
-                aria-label="Buscar campanha"
-                placeholder="Buscar campanha..."
-                value={props.query}
-                onChange={(event) => props.setQuery(event.target.value)}
-              />
-              <kbd>⌘ K</kbd>
-            </div>
+          <div className="campaign-level-tools">
             <ToggleGroup
               aria-label="Nível de detalhamento"
               className="level-switch"
@@ -2289,7 +2871,7 @@ function OverviewPage(props: OverviewPageProps) {
             </ToggleGroup>
             <Popover
               label="Configurar colunas da tabela"
-              trigger={<Settings2 size={17} />}
+              trigger={<Settings2 size={18} />}
               triggerClassName="icon-button subtle-icon settings-filter"
               panelClassName="column-menu"
             >
@@ -2299,10 +2881,10 @@ function OverviewPage(props: OverviewPageProps) {
                   {campaignColumnOptions.map(([key, label]) => (
                     <label key={key}>
                       <input
-                        checked={props.campaignColumns[key]}
+                        checked={props.columns[key]}
                         onChange={(event) =>
-                          props.setCampaignColumns({
-                            ...props.campaignColumns,
+                          props.setColumns({
+                            ...props.columns,
                             [key]: event.target.checked,
                           })
                         }
@@ -2316,18 +2898,13 @@ function OverviewPage(props: OverviewPageProps) {
             </Popover>
           </div>
         </CardHeader>
-        {props.selectedCampaignIds.length > 0 && (
+        {props.selectedIds.length > 0 && (
           <div className="selection-toolbar">
-            <span>
-              {props.selectedCampaignIds.length} campanha(s) selecionada(s)
-            </span>
+            <span>{props.selectedIds.length} entidade(s) selecionada(s)</span>
             <button onClick={props.onExportSelected} type="button">
-              <Download size={14} /> Exportar selecionadas
+              <Download size={15} /> Exportar selecionadas
             </button>
-            <button
-              onClick={() => props.setSelectedCampaignIds([])}
-              type="button"
-            >
+            <button onClick={() => props.setSelectedIds([])} type="button">
               Limpar seleção
             </button>
           </div>
@@ -2339,20 +2916,19 @@ function OverviewPage(props: OverviewPageProps) {
             period={props.period}
             accounts={props.accountOptions}
             live={props.live}
-            page={props.campaignPage}
-            setPage={props.setCampaignPage}
-            selectedIds={props.selectedCampaignIds}
-            setSelectedIds={props.setSelectedCampaignIds}
-            columns={props.campaignColumns}
-            onShowSales={props.onShowCampaignSales}
+            page={props.page}
+            setPage={props.setPage}
+            selectedIds={props.selectedIds}
+            setSelectedIds={props.setSelectedIds}
+            columns={props.columns}
+            onShowSales={props.onShowSales}
             onToast={props.onToast}
           />
         </CardContent>
       </Card>
       <div className="disclaimer">
-        <Clock3 size={13} /> Os dados são atualizados sob demanda. Vendas são
-        contabilizadas pelo valor aprovado, descontados reembolsos e
-        chargebacks.
+        <ExternalLink size={14} /> A pausa e a edição continuam no Meta Ads; o
+        menu de cada linha abre a entidade diretamente lá.
       </div>
     </>
   )
@@ -2362,16 +2938,12 @@ function MetricCard({
   label,
   value,
   detail,
-  trend,
-  positive,
   icon,
   iconStyle,
 }: {
   label: string
   value: string
   detail: string
-  trend?: string
-  positive: boolean
   icon: React.ReactNode
   iconStyle: string
 }) {
@@ -2402,20 +2974,7 @@ function MetricCard({
       <CardContent className="metric-card-content">
         <div className="metric-value">{value}</div>
         <div className="metric-card-bottom">
-          {trend ? (
-            <>
-              <Badge
-                className={`trend-pill ${positive ? "trend-positive" : "trend-negative"}`}
-                variant={positive ? "secondary" : "destructive"}
-              >
-                {positive ? <ArrowUpRight /> : <ArrowDownRight />}
-                {trend}
-              </Badge>
-              <span className="metric-comparison">vs. período anterior</span>
-            </>
-          ) : (
-            <span className="metric-comparison">no período selecionado</span>
-          )}
+          <span className="metric-comparison">no período selecionado</span>
         </div>
       </CardContent>
     </Card>
@@ -2442,6 +3001,9 @@ function PerformanceChart({
     mode === "Receita" ? point.revenue : point.spend
   )
   const max = Math.max(...values, 1) * 1.15
+  const yLabels = [1, 0.75, 0.5, 0.25, 0].map((ratio) =>
+    compactCurrency.format(max * ratio)
+  )
   const coords = values.map((value, index) => ({
     x: 40 + (index / Math.max(values.length - 1, 1)) * 700,
     y: 18 + (1 - value / max) * 138,
@@ -2450,10 +3012,6 @@ function PerformanceChart({
     .map((point, index) => `${index === 0 ? "M" : "L"}${point.x},${point.y}`)
     .join(" ")
   const area = `${line} L${coords.at(-1)?.x ?? 740},170 L40,170 Z`
-  const yLabels =
-    mode === "Receita"
-      ? ["R$ 8 mil", "R$ 6 mil", "R$ 4 mil", "R$ 2 mil", "R$ 0"]
-      : ["R$ 2 mil", "R$ 1,5 mil", "R$ 1 mil", "R$ 500", "R$ 0"]
   return (
     <div className="chart-wrap">
       <div className="chart-y-labels">
@@ -2545,13 +3103,15 @@ function CampaignTable({
           scale: 1,
         }))
       : rows.flatMap((campaign) =>
-          (campaign.adsets ?? []).map((name, index) => ({
-            campaign,
-            name:
-              level === "Anúncios" ? `${name} · Criativo ${index + 1}` : name,
-            id: `${campaign.id}-${index}`,
-            scale: 0.5,
-          }))
+          (campaign.adsets?.length ? campaign.adsets : [campaign.name]).map(
+            (name, index) => ({
+              campaign,
+              name:
+                level === "Anúncios" ? `${name} · Criativo ${index + 1}` : name,
+              id: `${campaign.id}-${index}`,
+              scale: 0.5,
+            })
+          )
         )
   const pageSize = 10
   const totalPages = Math.max(1, Math.ceil(expandedRows.length / pageSize))
@@ -2560,10 +3120,10 @@ function CampaignTable({
     (currentPage - 1) * pageSize,
     currentPage * pageSize
   )
-  const pageCampaignIds = [...new Set(pageRows.map((row) => row.campaign.id))]
+  const pageEntityIds = [...new Set(pageRows.map((row) => row.id))]
   const allSelected =
-    pageCampaignIds.length > 0 &&
-    pageCampaignIds.every((id) => selectedIds.includes(id))
+    pageEntityIds.length > 0 &&
+    pageEntityIds.every((id) => selectedIds.includes(id))
 
   function toggleCampaign(id: string, checked: boolean) {
     setSelectedIds(
@@ -2576,8 +3136,8 @@ function CampaignTable({
   function togglePage(checked: boolean) {
     setSelectedIds(
       checked
-        ? [...new Set([...selectedIds, ...pageCampaignIds])]
-        : selectedIds.filter((id) => !pageCampaignIds.includes(id))
+        ? [...new Set([...selectedIds, ...pageEntityIds])]
+        : selectedIds.filter((id) => !pageEntityIds.includes(id))
     )
   }
 
@@ -2588,7 +3148,7 @@ function CampaignTable({
           <EmptyMedia variant="icon">
             <Search />
           </EmptyMedia>
-          <EmptyTitle>Nenhuma campanha encontrada</EmptyTitle>
+          <EmptyTitle>Nenhum item encontrado</EmptyTitle>
           <EmptyDescription>
             Tente ajustar os filtros para ampliar os resultados.
           </EmptyDescription>
@@ -2606,7 +3166,7 @@ function CampaignTable({
           <TableRow>
             <TableHead className="check-cell">
               <input
-                aria-label="Selecionar todas as campanhas desta página"
+                aria-label={`Selecionar todos os itens desta página de ${level.toLocaleLowerCase("pt-BR")}`}
                 checked={allSelected}
                 onChange={(event) => togglePage(event.target.checked)}
                 type="checkbox"
@@ -2623,7 +3183,11 @@ function CampaignTable({
             {columns.spend && <TableHead>Investimento</TableHead>}
             {columns.sales && <TableHead>Vendas</TableHead>}
             {columns.revenue && <TableHead>Receita líquida</TableHead>}
+            {columns.profit && <TableHead>Lucro est.</TableHead>}
             {columns.roas && <TableHead>ROAS</TableHead>}
+            {columns.cpa && <TableHead>CPA</TableHead>}
+            {columns.cpc && <TableHead>CPC</TableHead>}
+            {columns.cpm && <TableHead>CPM</TableHead>}
             {columns.ctr && <TableHead>CTR</TableHead>}
             <TableHead aria-label="Ações" />
           </TableRow>
@@ -2633,6 +3197,10 @@ function CampaignTable({
             const factor = live ? 1 : (period / 14) * rowScale
             const spend = campaign.spend * factor
             const revenue = campaign.revenue * factor
+            const rowOrders = Math.round(campaign.sales * factor)
+            const clicks = campaign.clicks * factor
+            const impressions = campaign.impressions * factor
+            const rowProfit = calculateNetPerformance(spend, revenue).profit
             const account = accountOptions.find(
               (item) => item.id === campaign.accountId
             )
@@ -2651,9 +3219,9 @@ function CampaignTable({
                 <TableCell className="check-cell">
                   <input
                     aria-label={`Selecionar campanha ${name}`}
-                    checked={selectedIds.includes(campaign.id)}
+                    checked={selectedIds.includes(id)}
                     onChange={(event) =>
-                      toggleCampaign(campaign.id, event.target.checked)
+                      toggleCampaign(id, event.target.checked)
                     }
                     type="checkbox"
                   />
@@ -2682,13 +3250,7 @@ function CampaignTable({
                   <TableCell>
                     <div className="account-cell">
                       <Avatar className="table-avatar" size="sm">
-                        <AvatarFallback
-                          style={{
-                            backgroundColor: account?.color ?? accountColors[0],
-                          }}
-                        >
-                          {initials}
-                        </AvatarFallback>
+                        <AvatarFallback>{initials}</AvatarFallback>
                       </Avatar>
                       <span>
                         {account?.name ??
@@ -2705,12 +3267,17 @@ function CampaignTable({
                 )}
                 {columns.sales && (
                   <TableCell className="numeric-cell">
-                    {numberFormat.format(Math.round(campaign.sales * factor))}
+                    {numberFormat.format(rowOrders)}
                   </TableCell>
                 )}
                 {columns.revenue && (
                   <TableCell className="numeric-cell revenue-cell">
                     {currency.format(revenue)}
+                  </TableCell>
+                )}
+                {columns.profit && (
+                  <TableCell className="numeric-cell">
+                    {preciseCurrency.format(rowProfit)}
                   </TableCell>
                 )}
                 {columns.roas && (
@@ -2727,10 +3294,29 @@ function CampaignTable({
                     </Badge>
                   </TableCell>
                 )}
+                {columns.cpa && (
+                  <TableCell className="numeric-cell">
+                    {rowOrders > 0
+                      ? preciseCurrency.format(spend / rowOrders)
+                      : "—"}
+                  </TableCell>
+                )}
+                {columns.cpc && (
+                  <TableCell className="numeric-cell">
+                    {clicks > 0 ? preciseCurrency.format(spend / clicks) : "—"}
+                  </TableCell>
+                )}
+                {columns.cpm && (
+                  <TableCell className="numeric-cell">
+                    {impressions > 0
+                      ? preciseCurrency.format((spend / impressions) * 1000)
+                      : "—"}
+                  </TableCell>
+                )}
                 {columns.ctr && (
                   <TableCell className="numeric-cell">
-                    {campaign.impressions > 0
-                      ? `${((campaign.clicks / campaign.impressions) * 100).toFixed(2).replace(".", ",")}%`
+                    {impressions > 0
+                      ? `${((clicks / impressions) * 100).toFixed(2).replace(".", ",")}%`
                       : "—"}
                   </TableCell>
                 )}
@@ -2753,19 +3339,43 @@ function CampaignTable({
                       className="row-action-menu"
                     >
                       <DropdownMenuGroup>
-                        <DropdownMenuLabel>Ações da campanha</DropdownMenuLabel>
+                        <DropdownMenuLabel>
+                          Ações de {level.toLocaleLowerCase("pt-BR")}
+                        </DropdownMenuLabel>
                         <DropdownMenuItem
-                          onClick={() =>
-                            void copyCampaignId(campaign.id, onToast)
-                          }
+                          onClick={() => void copyCampaignId(id, onToast)}
                         >
                           <Copy data-icon="inline-start" /> Copiar ID
                         </DropdownMenuItem>
                         <DropdownMenuSeparator />
-                        <DropdownMenuItem onClick={() => onShowSales(campaign)}>
+                        <DropdownMenuItem
+                          onClick={() =>
+                            onShowSales(
+                              live ? { ...campaign, id, name } : campaign
+                            )
+                          }
+                        >
                           <ShoppingBag data-icon="inline-start" />
                           Ver vendas atribuídas
                         </DropdownMenuItem>
+                        {live && (
+                          <>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem
+                              onClick={() =>
+                                openMetaAds(
+                                  campaign.accountId,
+                                  id,
+                                  level,
+                                  onToast
+                                )
+                              }
+                            >
+                              <ExternalLink data-icon="inline-start" />
+                              Abrir no Meta Ads
+                            </DropdownMenuItem>
+                          </>
+                        )}
                       </DropdownMenuGroup>
                     </DropdownMenuContent>
                   </DropdownMenu>
@@ -4244,7 +4854,11 @@ function readCampaignColumns(): Record<CampaignColumn, boolean> {
     spend: true,
     sales: true,
     revenue: true,
+    profit: true,
     roas: true,
+    cpa: false,
+    cpc: false,
+    cpm: false,
     ctr: true,
   }
   if (typeof window === "undefined") return defaults
@@ -4293,6 +4907,7 @@ function formatActivityDate(value: string) {
 }
 
 function pageTitle(page: Page) {
+  if (page === "campaigns") return "Campanhas"
   if (page === "sales") return "Vendas"
   if (page === "integrations") return "Integrações"
   return "Visão geral"
@@ -4328,6 +4943,13 @@ function isPeriodSelected(range: DateRange, days: number) {
   return preset.from === range.from && preset.to === range.to
 }
 
+function formatPercent(value: number) {
+  return new Intl.NumberFormat("pt-BR", {
+    maximumFractionDigits: 1,
+    minimumFractionDigits: 1,
+  }).format(value)
+}
+
 async function copyCampaignId(
   campaignId: string,
   onToast: (message: string) => void
@@ -4338,6 +4960,30 @@ async function copyCampaignId(
   } catch {
     onToast("Não foi possível copiar o ID.")
   }
+}
+
+function openMetaAds(
+  accountId: string,
+  entityId: string,
+  level: Level,
+  onToast: (message: string) => void
+) {
+  const query = new URLSearchParams({
+    act: accountId.replace(/^act_/, ""),
+  })
+  const selectedKey =
+    level === "Campanhas"
+      ? "selected_campaign_ids"
+      : level === "Conjuntos"
+        ? "selected_adset_ids"
+        : "selected_ad_ids"
+  query.set(selectedKey, JSON.stringify([entityId]))
+  const popup = window.open(
+    `https://adsmanager.facebook.com/adsmanager/manage/campaigns?${query}`,
+    "_blank"
+  )
+  if (popup) popup.opener = null
+  else onToast("O navegador bloqueou a abertura do Meta Ads.")
 }
 
 function csvCell(value: unknown) {

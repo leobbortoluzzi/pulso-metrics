@@ -1,9 +1,14 @@
 import { describe, expect, it } from "vitest"
 import {
+  AD_TAX_RATE,
   approvedRevenue,
   calculatePerformance,
+  calculateNetPerformance,
   convertToBrl,
+  PRODUCT_TAX_RATE,
 } from "../src/lib/metrics"
+import { summarizeSales } from "../src/lib/sales"
+import type { Sale } from "../src/lib/dashboard-data"
 import { createPasswordHash, verifyPassword } from "../worker/secure-store"
 import { normalizeSale } from "../worker/webhooks"
 
@@ -39,6 +44,20 @@ describe("campaign performance formulas", () => {
     })
   })
 
+  it("includes both configured taxes when estimating net profit and ROI", () => {
+    expect(AD_TAX_RATE).toBe(0.125)
+    expect(PRODUCT_TAX_RATE).toBe(0.06)
+    expect(calculateNetPerformance(200, 1000)).toEqual({
+      spend: 200,
+      revenue: 1000,
+      adTax: 25,
+      productTax: 60,
+      profit: 715,
+      roas: 5,
+      roi: 715 / 225,
+    })
+  })
+
   it("converts minor units with the PTAX selling rate", () => {
     expect(convertToBrl(1250, "USD", 5.2)).toBeCloseTo(65)
     expect(convertToBrl(1250, "BRL")).toBe(12.5)
@@ -54,6 +73,58 @@ describe("campaign performance formulas", () => {
         { amountBrl: null, status: "approved" },
       ])
     ).toBe(100)
+  })
+})
+
+describe("sales summary formulas", () => {
+  it("reports refunds, chargebacks, net revenue and order-based ARPU", () => {
+    const rows: Sale[] = [
+      {
+        id: "1",
+        date: "2026-09-01",
+        product: "Curso",
+        buyer: "A",
+        gateway: "Hotmart",
+        amount: 200,
+        status: "Aprovada",
+        campaign: "Campanha",
+        matched: true,
+      },
+      {
+        id: "2",
+        date: "2026-09-02",
+        product: "Curso",
+        buyer: "B",
+        gateway: "Hotmart",
+        amount: 50,
+        status: "Reembolsada",
+        campaign: "Campanha",
+        matched: true,
+      },
+      {
+        id: "3",
+        date: "2026-09-03",
+        product: "Curso",
+        buyer: "C",
+        gateway: "Kiwify",
+        amount: 25,
+        status: "Chargeback",
+        campaign: "Campanha",
+        matched: false,
+      },
+    ]
+
+    expect(summarizeSales(rows)).toMatchObject({
+      approved: 1,
+      refunded: 1,
+      chargebacks: 1,
+      approvedRevenue: 200,
+      refundedRevenue: 50,
+      chargebackRevenue: 25,
+      netRevenue: 125,
+      arpu: 125,
+    })
+    expect(summarizeSales(rows).refundRate).toBeCloseTo(100 / 3)
   })
 })
 

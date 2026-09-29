@@ -8,6 +8,19 @@ export type PerformanceMetrics = {
 
 export type SaleStatus = "approved" | "refunded" | "chargeback" | "pending"
 
+export const AD_TAX_RATE = 0.125
+export const PRODUCT_TAX_RATE = 0.06
+
+export type NetPerformanceMetrics = {
+  spend: number
+  revenue: number
+  adTax: number
+  productTax: number
+  profit: number
+  roas: number | null
+  roi: number | null
+}
+
 export function calculatePerformance(
   spend: number,
   revenue: number
@@ -21,6 +34,28 @@ export function calculatePerformance(
     profit,
     roas: safeSpend > 0 ? safeRevenue / safeSpend : null,
     roi: safeSpend > 0 ? profit / safeSpend : null,
+  }
+}
+
+export function calculateNetPerformance(
+  spend: number,
+  revenue: number
+): NetPerformanceMetrics {
+  const safeSpend = Math.max(0, Number.isFinite(spend) ? spend : 0)
+  const safeRevenue = Number.isFinite(revenue) ? revenue : 0
+  const adTax = safeSpend * AD_TAX_RATE
+  const productTax = Math.max(0, safeRevenue) * PRODUCT_TAX_RATE
+  const totalAdCost = safeSpend + adTax
+  const profit = safeRevenue - safeSpend - adTax - productTax
+
+  return {
+    spend: safeSpend,
+    revenue: safeRevenue,
+    adTax,
+    productTax,
+    profit,
+    roas: safeSpend > 0 ? safeRevenue / safeSpend : null,
+    roi: totalAdCost > 0 ? profit / totalAdCost : null,
   }
 }
 

@@ -27,6 +27,11 @@ export type SalesQueryResult = {
     refunded: number
     chargebacks: number
     approvedRevenue: number
+    refundedRevenue: number
+    chargebackRevenue: number
+    netRevenue: number
+    refundRate: number
+    arpu: number | null
     averageTicket: number | null
     approvedAmountCount: number
     matched: number
@@ -81,7 +86,16 @@ export async function querySales(
       .all<Record<string, unknown>>(),
     database
       .prepare(
-        `SELECT COUNT(*) AS total, SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) AS approved_count, SUM(CASE WHEN status = 'refunded' THEN 1 ELSE 0 END) AS refunded_count, SUM(CASE WHEN status = 'chargeback' THEN 1 ELSE 0 END) AS chargeback_count, SUM(CASE WHEN status = 'approved' AND amount_brl IS NOT NULL THEN amount_brl ELSE 0 END) AS approved_revenue_brl, SUM(CASE WHEN status = 'approved' AND amount_brl IS NOT NULL THEN 1 ELSE 0 END) AS approved_amount_count, SUM(CASE WHEN campaign_id IS NOT NULL OR adset_id IS NOT NULL OR ad_id IS NOT NULL THEN 1 ELSE 0 END) AS matched_count FROM sales WHERE ${where}`
+        `SELECT COUNT(*) AS total,
+          SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) AS approved_count,
+          SUM(CASE WHEN status = 'refunded' THEN 1 ELSE 0 END) AS refunded_count,
+          SUM(CASE WHEN status = 'chargeback' THEN 1 ELSE 0 END) AS chargeback_count,
+          SUM(CASE WHEN status = 'approved' AND amount_brl IS NOT NULL THEN amount_brl ELSE 0 END) AS approved_revenue_brl,
+          SUM(CASE WHEN status = 'refunded' AND amount_brl IS NOT NULL THEN amount_brl ELSE 0 END) AS refunded_revenue_brl,
+          SUM(CASE WHEN status = 'chargeback' AND amount_brl IS NOT NULL THEN amount_brl ELSE 0 END) AS chargeback_revenue_brl,
+          SUM(CASE WHEN status = 'approved' AND amount_brl IS NOT NULL THEN 1 ELSE 0 END) AS approved_amount_count,
+          SUM(CASE WHEN campaign_id IS NOT NULL OR adset_id IS NOT NULL OR ad_id IS NOT NULL THEN 1 ELSE 0 END) AS matched_count
+        FROM sales WHERE ${where}`
       )
       .bind(...values)
       .first<{
@@ -90,6 +104,8 @@ export async function querySales(
         refunded_count: number | null
         chargeback_count: number | null
         approved_revenue_brl: number | null
+        refunded_revenue_brl: number | null
+        chargeback_revenue_brl: number | null
         approved_amount_count: number | null
         matched_count: number | null
       }>(),
@@ -97,7 +113,14 @@ export async function querySales(
 
   const total = summary?.total ?? 0
   const approvedRevenue = summary?.approved_revenue_brl ?? 0
+  const refundedRevenue = summary?.refunded_revenue_brl ?? 0
+  const chargebackRevenue = summary?.chargeback_revenue_brl ?? 0
+  const approvedCount = summary?.approved_count ?? 0
+  const refundedCount = summary?.refunded_count ?? 0
+  const chargebackCount = summary?.chargeback_count ?? 0
   const approvedAmountCount = summary?.approved_amount_count ?? 0
+  const netRevenue = approvedRevenue - refundedRevenue - chargebackRevenue
+  const settledCount = approvedCount + refundedCount + chargebackCount
   return {
     sales: sales.results,
     total,
@@ -105,10 +128,15 @@ export async function querySales(
     offset: query.offset,
     summary: {
       total,
-      approved: summary?.approved_count ?? 0,
-      refunded: summary?.refunded_count ?? 0,
-      chargebacks: summary?.chargeback_count ?? 0,
+      approved: approvedCount,
+      refunded: refundedCount,
+      chargebacks: chargebackCount,
       approvedRevenue,
+      refundedRevenue,
+      chargebackRevenue,
+      netRevenue,
+      refundRate: settledCount ? (refundedCount / settledCount) * 100 : 0,
+      arpu: approvedAmountCount > 0 ? netRevenue / approvedAmountCount : null,
       averageTicket:
         approvedAmountCount > 0 ? approvedRevenue / approvedAmountCount : null,
       approvedAmountCount,
