@@ -3213,7 +3213,13 @@ function PerformanceChart({
             className="chart-gridline"
           />
         ))}
-        <path d={area} fill="var(--chart-2)" fillOpacity=".11" />
+        <path
+          d={area}
+          className={
+            mode === "Receita" ? "chart-area-revenue" : "chart-area-spend"
+          }
+          fillOpacity=".11"
+        />
         <path
           d={line}
           fill="none"
