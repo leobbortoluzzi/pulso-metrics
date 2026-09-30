@@ -6,5 +6,7 @@ export default defineConfig({
   test: {
     include: ["tests/**/*.test.ts"],
     clearMocks: true,
+    // Preserve the raw stylesheet for palette and contrast regression checks.
+    css: { include: [/src\/index\.css\?raw$/] },
   },
 })
