@@ -1,6 +1,6 @@
 import { decryptSecret, encryptSecret } from "./secure-store"
 
-export type MetaConfiguration = {
+type MetaConfiguration = {
   appId: string
   appSecret: string
   apiVersion: string

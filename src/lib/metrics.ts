@@ -82,7 +82,7 @@ export function currencyMinorUnit(currency: string) {
   }
 }
 
-export function amountMinorToMajor(amountMinor: number, currency: string) {
+function amountMinorToMajor(amountMinor: number, currency: string) {
   const safeAmount = Number.isFinite(amountMinor) ? amountMinor : 0
   return safeAmount / 10 ** currencyMinorUnit(currency)
 }
